@@ -16,7 +16,7 @@ Per-frame extraction:
 
          landmark coords → head width, height, 
          
-         rown position, ear anchors
+         crown position, ear anchors
 
          
   Hair:  
