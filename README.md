@@ -100,8 +100,9 @@ LLM (Gemini 3.5 / Grok / Claude Haiku / GPT-4o mini)
 
   context: userHeadProfile + current hair params
   
-  output: { preset?, top_length, side_length, 
+  output: {
   
+            preset?, top_length, side_length, 
             back_length, messiness, taper }
             
       ↓
