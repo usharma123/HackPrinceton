@@ -4,16 +4,15 @@
 // Body: { system: string, message: string }
 // Response: LLMEditResponse JSON
 //
-// Wired to Gemini 1.5 Flash via Google Generative AI SDK.
+// Uses Gemini OpenAI-compatible endpoint (same quota as direct REST calls).
 //
 // ETHAN: set GEMINI_API_KEY in .env.local
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
-const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+const GEMINI_API_URL =
+  'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
 
 export async function POST(req: NextRequest) {
   const { system, message } = await req.json();
@@ -23,13 +22,31 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const result = await model.generateContent({
-      systemInstruction: system,
-      contents: [{ role: 'user', parts: [{ text: message }] }],
-      generationConfig: { maxOutputTokens: 512 },
+    const response = await fetch(GEMINI_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.GEMINI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'gemini-3.1-flash-lite-preview',
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: message },
+        ],
+        max_tokens: 512,
+        temperature: 0.7,
+      }),
     });
 
-    const text = result.response.text();
+    if (!response.ok) {
+      const err = await response.text();
+      console.error('[/api/edit] Gemini error:', err);
+      return NextResponse.json({ error: 'LLM request failed' }, { status: 500 });
+    }
+
+    const data = await response.json();
+    const text = data.choices[0].message.content as string;
 
     // Strip any accidental markdown fences the model might add
     const jsonText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
