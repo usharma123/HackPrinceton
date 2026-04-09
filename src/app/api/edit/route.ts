@@ -4,18 +4,16 @@
 // Body: { system: string, message: string }
 // Response: LLMEditResponse JSON
 //
-// Currently wired to Claude claude-haiku-4-5 via Anthropic SDK.
-// Swap the model string for Gemini/GPT-4o-mini if preferred.
+// Wired to Gemini 1.5 Flash via Google Generative AI SDK.
 //
-// ETHAN: set ANTHROPIC_API_KEY in .env.local
+// ETHAN: set GEMINI_API_KEY in .env.local
 // ============================================================
 
 import { NextRequest, NextResponse } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 
-const client = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
 
 export async function POST(req: NextRequest) {
   const { system, message } = await req.json();
@@ -25,14 +23,13 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const response = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 512,
-      system,
-      messages: [{ role: 'user', content: message }],
+    const result = await model.generateContent({
+      systemInstruction: system,
+      contents: [{ role: 'user', parts: [{ text: message }] }],
+      generationConfig: { maxOutputTokens: 512 },
     });
 
-    const text = response.content[0].type === 'text' ? response.content[0].text : '';
+    const text = result.response.text();
 
     // Strip any accidental markdown fences the model might add
     const jsonText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
