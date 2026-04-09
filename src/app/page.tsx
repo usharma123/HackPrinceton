@@ -2,20 +2,24 @@
 
 import { useState } from 'react';
 import dynamic from 'next/dynamic';
-import { HairParams } from '@/types';
+import { HairParams, UserHeadProfile } from '@/types';
 import { mockUserHeadProfile } from '@/data/mockProfile';
 import EditPanel from '@/components/EditPanel';
+import ScanSetup from '@/components/ScanSetup';
 
 // Dynamically import HairScene (Three.js — no SSR)
 const HairScene = dynamic(() => import('@/components/HairScene'), { ssr: false });
 
 export default function Home() {
-  const [params, setParams] = useState<HairParams>(
-    mockUserHeadProfile.currentStyle.params
-  );
+  const [showSetup, setShowSetup] = useState(true);
+  const [profile, setProfile] = useState<UserHeadProfile>(mockUserHeadProfile);
+  const [params, setParams] = useState<HairParams>(mockUserHeadProfile.currentStyle.params);
 
-  // Keep a mutable profile reference so useLLM always gets current params
-  const [profile, setProfile] = useState(mockUserHeadProfile);
+  const handleSetupComplete = (newProfile: UserHeadProfile) => {
+    setProfile(newProfile);
+    setParams(newProfile.currentStyle.params);
+    setShowSetup(false);
+  };
 
   const handleParamsChange = (next: HairParams) => {
     setParams(next);
@@ -27,6 +31,8 @@ export default function Home() {
 
   return (
     <main className="flex h-screen bg-gray-950 text-white overflow-hidden">
+      {showSetup && <ScanSetup onComplete={handleSetupComplete} />}
+
       {/* 3D Viewport */}
       <div className="flex-1 relative">
         <HairScene params={params} colorRGB={profile.currentStyle.colorRGB} />

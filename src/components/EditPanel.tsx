@@ -9,7 +9,7 @@
 
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { HairParams, UserHeadProfile } from '@/types';
 import { useLLM } from '@/hooks/useLLM';
 
@@ -24,6 +24,9 @@ export default function EditPanel({ profile, onParamsChange }: EditPanelProps) {
   const [historyIndex, setHistoryIndex] = useState(0);
 
   const { editHair, loading, error } = useLLM(profile);
+  const [summary, setSummary] = useState<string | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const summaryRef = useRef<HTMLTextAreaElement>(null);
 
   const currentParams = history[historyIndex];
 
@@ -58,6 +61,28 @@ export default function EditPanel({ profile, onParamsChange }: EditPanelProps) {
       setHistoryIndex(historyIndex - 1);
       onParamsChange(prev);
     }
+  };
+
+  const handleGetSummary = async () => {
+    setSummaryLoading(true);
+    setSummary(null);
+    try {
+      const res = await fetch('/api/summary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profile, params: currentParams }),
+      });
+      const data = await res.json();
+      setSummary(data.summary ?? data.error ?? 'Something went wrong');
+    } catch {
+      setSummary('Failed to generate summary');
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+
+  const handleCopySummary = () => {
+    if (summary) navigator.clipboard.writeText(summary);
   };
 
   const redo = () => {
@@ -138,6 +163,33 @@ export default function EditPanel({ profile, onParamsChange }: EditPanelProps) {
             />
           </div>
         ))}
+      </div>
+
+      {/* Barber Summary */}
+      <div className="flex flex-col gap-2 pt-4 border-t border-gray-700">
+        <button
+          onClick={handleGetSummary}
+          disabled={summaryLoading}
+          className="bg-green-700 hover:bg-green-600 disabled:bg-gray-600 rounded px-4 py-2 text-sm font-medium transition-colors"
+        >
+          {summaryLoading ? 'Generating…' : 'Get Barber Summary'}
+        </button>
+        {summary && (
+          <div className="flex flex-col gap-1">
+            <textarea
+              ref={summaryRef}
+              readOnly
+              value={summary}
+              className="bg-gray-800 rounded p-2 text-xs text-gray-200 resize-none h-36 focus:outline-none"
+            />
+            <button
+              onClick={handleCopySummary}
+              className="bg-gray-700 hover:bg-gray-600 rounded px-3 py-1 text-xs"
+            >
+              Copy to clipboard
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Current preset badge */}
