@@ -15,11 +15,12 @@
 
 'use client';
 
-import { useRef, useMemo } from 'react';
+import { useRef, useMemo, Suspense } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls } from '@react-three/drei';
+import { OrbitControls, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { HairParams, UserHeadProfile } from '@/types';
+import FaceHead from './FaceHead';
 
 // ── Hair zone position computation ───────────────────────────
 
@@ -91,12 +92,87 @@ function computeZones(profile: UserHeadProfile): HairZones {
 
 // ── Sub-components ──────────────────────────────────────────
 
-function HeadMesh() {
+interface HeadMeshProps {
+  profile?: UserHeadProfile;
+}
+
+// Sphere fallback — shown while head.glb loads or if it fails.
+// rFace = 1.05 so the face mesh sits just outside the unit sphere.
+function HeadMesh({ profile }: HeadMeshProps) {
+  const scaleX = profile ? (profile.headProportions.width  / 1.6) : 1;
+  const scaleY = profile ? (profile.headProportions.height / 2.2) : 1;
+
   return (
-    <mesh castShadow receiveShadow>
-      <sphereGeometry args={[1, 64, 64]} />
-      <meshStandardMaterial color="#f5c9a0" roughness={0.8} metalness={0.0} />
-    </mesh>
+    <group scale={[scaleX, scaleY, scaleX]}>
+      <mesh castShadow receiveShadow>
+        <sphereGeometry args={[1, 64, 64]} />
+        <meshStandardMaterial color="#f5c9a0" roughness={0.8} metalness={0.0} />
+      </mesh>
+      {profile?.faceScanData && (
+        <FaceHead faceScanData={profile.faceScanData} rFace={1.05} />
+      )}
+    </group>
+  );
+}
+
+// Canonical head .glb
+// The exported model is NOT at canonical scale — we measure its bounds at runtime
+// and compute the correction factor so ear-to-ear = 1.6 scene units with the ear
+// midpoint at the scene origin (y = 0).
+//
+// We also derive rFace = box.max.z * canonicalScale, which is the exact Z depth
+// of the head's front face surface in canonical pre-scale space.  FaceHead uses
+// this so its hemisphere projection lands on the head surface — no guesswork.
+function CanonicalHeadGLB({ profile }: HeadMeshProps) {
+  const { scene } = useGLTF('/models/head.glb');
+
+  const { canonicalScale, glbCenterY, glbCenterZ, rFace } = useMemo(() => {
+    scene.updateWorldMatrix(true, true);
+    const box    = new THREE.Box3().setFromObject(scene);
+    const size   = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const cs     = 1.6 / Math.max(size.x, 0.001);
+
+    // The GLB origin may be anywhere — only Y is corrected when rendering.
+    // rFace must be the distance from the GLB's Z *center* to its front face,
+    // not from the GLB origin to box.max.z (which collapses to ≈0 if the model
+    // origin sits at the nose).  Minimum 0.85 so the hemisphere covers ears (x≈±0.8).
+    const depthFromCenter = Math.max(box.max.z - center.z, 0);
+    const rf = Math.max(depthFromCenter * cs, 0.85) * 1.02;
+
+    return { canonicalScale: cs, glbCenterY: center.y, glbCenterZ: center.z, rFace: rf };
+  }, [scene]);
+
+  const scaleX = profile ? (profile.headProportions.width  / 1.6) : 1;
+  const scaleY = profile ? (profile.headProportions.height / 2.2) : 1;
+
+  // Two-level group:
+  //  outer — applies the profile's non-uniform head-proportion scale around origin
+  //  inner — scales the GLB to canonical size and shifts its ear midpoint to y = 0
+  return (
+    <group scale={[scaleX, scaleY, scaleX]}>
+      <group
+        position={[0, -(glbCenterY * canonicalScale), 0]}
+        scale={[canonicalScale, canonicalScale, canonicalScale]}
+      >
+        <primitive object={scene} castShadow receiveShadow />
+      </group>
+      {profile?.faceScanData && (
+        // Z-offset to the head's Z center so the hemisphere projects to
+        // the nose position regardless of where the GLB origin is placed.
+        <group position={[0, 0, glbCenterZ * canonicalScale]}>
+          <FaceHead faceScanData={profile.faceScanData} rFace={rFace} />
+        </group>
+      )}
+    </group>
+  );
+}
+
+function CanonicalHead({ profile }: HeadMeshProps) {
+  return (
+    <Suspense fallback={<HeadMesh profile={profile} />}>
+      <CanonicalHeadGLB profile={profile} />
+    </Suspense>
   );
 }
 
@@ -133,15 +209,19 @@ interface SceneProps {
   params:   HairParams;
   colorRGB: string;
   zones:    HairZones;
+  profile?: UserHeadProfile;
 }
 
-function Scene({ params, colorRGB, zones }: SceneProps) {
+function Scene({ params, colorRGB, zones, profile }: SceneProps) {
   return (
     <>
-      <ambientLight intensity={0.6} />
-      <directionalLight position={[5, 10, 5]} intensity={1.2} castShadow />
+      <ambientLight intensity={0.5} />
+      <directionalLight position={[5, 10, 5]}  intensity={1.0} castShadow />
+      <directionalLight position={[0, 2, 5]}   intensity={0.8} />
 
-      <HeadMesh />
+      {/* FaceHead is rendered inside CanonicalHeadGLB / HeadMesh so it
+          shares the same GLB bounding-box measurement for rFace. */}
+      <CanonicalHead profile={profile} />
 
       <HairZone
         position={zones.top.position}
@@ -203,7 +283,7 @@ export default function HairScene({ params, colorRGB = '#3b1f0a', profile }: Hai
       camera={{ position: [0, 1, 4], fov: 45 }}
       style={{ width: '100%', height: '100%' }}
     >
-      <Scene params={params} colorRGB={colorRGB} zones={zones} />
+      <Scene params={params} colorRGB={colorRGB} zones={zones} profile={profile} />
     </Canvas>
   );
 }

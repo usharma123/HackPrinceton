@@ -1,3 +1,7 @@
+# make the camera smoother (smooth lerp + less movement per mouse dx/dy)
+
+# if nothing changes, get barber summary returns "No change"
+
 What was set up
 Stack: Next.js 15 + TypeScript + Tailwind + react-three-fiber + Anthropic SDK
 

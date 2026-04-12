@@ -19,6 +19,12 @@ export interface RawScanData {
   imageHeight: number;
 }
 
+// Returned alongside the profile so ScanCamera can compute depth
+export interface ScanMeta {
+  pxToScene: number;
+  earToEarPx: number;
+}
+
 // ── Constants ──────────────────────────────────────────────
 
 const CANONICAL_EAR_WIDTH = 1.6; // scene units
@@ -124,7 +130,7 @@ function inferPreset(hairType: 'straight' | 'wavy' | 'curly'): HairPreset {
 
 // ── Main conversion ────────────────────────────────────────
 
-export function mediapipeToProfile(scan: RawScanData): UserHeadProfile {
+export function mediapipeToProfile(scan: RawScanData): UserHeadProfile & { _meta: ScanMeta } {
   const { landmarks: lms, segmentationMask, hairType, imageWidth, imageHeight } = scan;
 
   // Pixel positions of key landmarks
@@ -181,6 +187,7 @@ export function mediapipeToProfile(scan: RawScanData): UserHeadProfile {
       colorRGB: '#3b1f0a',
       params,
     },
+    _meta: { pxToScene, earToEarPx: earToEar_px },
   };
 }
 
