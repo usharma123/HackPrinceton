@@ -35,7 +35,7 @@ export default function Home() {
 
       {/* 3D Viewport */}
       <div className="flex-1 relative">
-        <HairScene params={params} colorRGB={profile.currentStyle.colorRGB} />
+        <HairScene params={params} colorRGB={profile.currentStyle.colorRGB} profile={profile} />
         <div className="absolute top-3 left-3 text-xs text-gray-500 pointer-events-none">
           ShapeUp · drag to rotate
         </div>
