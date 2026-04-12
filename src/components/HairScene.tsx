@@ -97,21 +97,25 @@ interface HeadMeshProps {
 }
 
 // Sphere fallback — shown while head.glb loads or if it fails.
-// rFace = 1.05 so the face mesh sits just outside the unit sphere.
+// FaceHead is outside the non-uniform scale group so scaleY doesn't
+// double-compress the face landmarks. rFace=1.2 sits slightly beyond
+// the unit sphere surface for a gentler hemisphere curvature.
 function HeadMesh({ profile }: HeadMeshProps) {
   const scaleX = profile ? (profile.headProportions.width  / 1.6) : 1;
   const scaleY = profile ? (profile.headProportions.height / 2.2) : 1;
 
   return (
-    <group scale={[scaleX, scaleY, scaleX]}>
-      <mesh castShadow receiveShadow>
-        <sphereGeometry args={[1, 64, 64]} />
-        <meshStandardMaterial color="#f5c9a0" roughness={0.8} metalness={0.0} />
-      </mesh>
+    <>
+      <group scale={[scaleX, scaleY, scaleX]}>
+        <mesh castShadow receiveShadow>
+          <sphereGeometry args={[1, 64, 64]} />
+          <meshStandardMaterial color="#f5c9a0" roughness={0.8} metalness={0.0} />
+        </mesh>
+      </group>
       {profile?.faceScanData && (
-        <FaceHead faceScanData={profile.faceScanData} rFace={1.05} />
+        <FaceHead faceScanData={profile.faceScanData} rFace={1.2} />
       )}
-    </group>
+    </>
   );
 }
 
@@ -138,7 +142,7 @@ function CanonicalHeadGLB({ profile }: HeadMeshProps) {
     // not from the GLB origin to box.max.z (which collapses to ≈0 if the model
     // origin sits at the nose).  Minimum 0.85 so the hemisphere covers ears (x≈±0.8).
     const depthFromCenter = Math.max(box.max.z - center.z, 0);
-    const rf = Math.max(depthFromCenter * cs, 0.85) * 1.02;
+    const rf = Math.max(depthFromCenter * cs, 1.2) * 1.1;
 
     return { canonicalScale: cs, glbCenterY: center.y, glbCenterZ: center.z, rFace: rf };
   }, [scene]);
@@ -149,22 +153,28 @@ function CanonicalHeadGLB({ profile }: HeadMeshProps) {
   // Two-level group:
   //  outer — applies the profile's non-uniform head-proportion scale around origin
   //  inner — scales the GLB to canonical size and shifts its ear midpoint to y = 0
+  //
+  // FaceHead is intentionally placed OUTSIDE the outer group so the non-uniform
+  // scaleY doesn't double-compress the face mesh (landmarks are already in the
+  // correct proportional scene space from landmarksToScene).
   return (
-    <group scale={[scaleX, scaleY, scaleX]}>
-      <group
-        position={[0, -(glbCenterY * canonicalScale), 0]}
-        scale={[canonicalScale, canonicalScale, canonicalScale]}
-      >
-        <primitive object={scene} castShadow receiveShadow />
+    <>
+      <group scale={[scaleX, scaleY, scaleX]}>
+        <group
+          position={[0, -(glbCenterY * canonicalScale), 0]}
+          scale={[canonicalScale, canonicalScale, canonicalScale]}
+        >
+          <primitive object={scene} castShadow receiveShadow />
+        </group>
       </group>
       {profile?.faceScanData && (
-        // Z-offset to the head's Z center so the hemisphere projects to
-        // the nose position regardless of where the GLB origin is placed.
+        // Z-offset to the head's Z center (in canonical world units, same as
+        // scaleX=1 means no Z distortion from the outer group).
         <group position={[0, 0, glbCenterZ * canonicalScale]}>
           <FaceHead faceScanData={profile.faceScanData} rFace={rFace} />
         </group>
       )}
-    </group>
+    </>
   );
 }
 

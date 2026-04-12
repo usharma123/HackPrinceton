@@ -35,9 +35,9 @@ function landmarksToScene(
   // MediaPipe Z encodes facial topography: nose is most negative (closest
   // to camera), eye sockets and temples slightly positive.  After negation
   // this becomes the forward protrusion at each landmark.
-  // Scale by ~0.7× the XY scale so features are clearly visible but not
-  // exaggerated (nose protrudes roughly 0.15–0.25 scene units).
-  const zFeatureScale = scale * 0.7;
+  // Fixed constant — MediaPipe z is already normalized to face scale, so
+  // scaling by the XY scale factor was over-exaggerating nose protrusion.
+  const zFeatureScale = 0.4;
 
   const positions = new Float32Array(lm.length * 3);
   lm.forEach((p, i) => {
