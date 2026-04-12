@@ -97,25 +97,24 @@ interface HeadMeshProps {
 }
 
 // Sphere fallback — shown while head.glb loads or if it fails.
-// FaceHead is outside the non-uniform scale group so scaleY doesn't
-// double-compress the face landmarks. rFace=1.2 sits slightly beyond
-// the unit sphere surface for a gentler hemisphere curvature.
+// FaceHead sits on the front of the unit sphere (z≈1) inside the same
+// outer scale group so proportions stay consistent.
 function HeadMesh({ profile }: HeadMeshProps) {
   const scaleX = profile ? (profile.headProportions.width  / 1.6) : 1;
   const scaleY = profile ? (profile.headProportions.height / 2.2) : 1;
 
   return (
-    <>
-      <group scale={[scaleX, scaleY, scaleX]}>
-        <mesh castShadow receiveShadow>
-          <sphereGeometry args={[1, 64, 64]} />
-          <meshStandardMaterial color="#f5c9a0" roughness={0.8} metalness={0.0} />
-        </mesh>
-      </group>
+    <group scale={[scaleX, scaleY, scaleX]}>
+      <mesh castShadow receiveShadow>
+        <sphereGeometry args={[1, 64, 64]} />
+        <meshStandardMaterial color="#f5c9a0" roughness={0.8} metalness={0.0} />
+      </mesh>
       {profile?.faceScanData && (
-        <FaceHead faceScanData={profile.faceScanData} rFace={1.2} />
+        <group position={[0, 0, 1.0]}>
+          <FaceHead faceScanData={profile.faceScanData} outerScaleY={scaleY} />
+        </group>
       )}
-    </>
+    </group>
   );
 }
 
@@ -130,51 +129,64 @@ function HeadMesh({ profile }: HeadMeshProps) {
 function CanonicalHeadGLB({ profile }: HeadMeshProps) {
   const { scene } = useGLTF('/models/head.glb');
 
-  const { canonicalScale, glbCenterY, glbCenterZ, rFace } = useMemo(() => {
+  const { glbScale, glbCenterY, faceSurfaceZ } = useMemo(() => {
     scene.updateWorldMatrix(true, true);
     const box    = new THREE.Box3().setFromObject(scene);
     const size   = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
-    const cs     = 1.6 / Math.max(size.x, 0.001);
 
-    // The GLB origin may be anywhere — only Y is corrected when rendering.
-    // rFace must be the distance from the GLB's Z *center* to its front face,
-    // not from the GLB origin to box.max.z (which collapses to ≈0 if the model
-    // origin sits at the nose).  Minimum 0.85 so the hemisphere covers ears (x≈±0.8).
-    const depthFromCenter = Math.max(box.max.z - center.z, 0);
-    const rf = Math.max(depthFromCenter * cs, 1.2) * 1.1;
+    // The model now includes head + neck + shoulders.  size.x is the shoulder
+    // width, but the face is only ~45% of that span.  Scale so the face
+    // portion = 1.6 canonical units (matching the MediaPipe mesh width).
+    const FACE_FRACTION = 0.45; // face ≈ 40–50% of total model X — tune if needed
+    const cs      = 1.6 / Math.max(size.x, 0.001);
+    const gs      = cs / FACE_FRACTION; // GLB-group scale; face → 1.6 units
 
-    return { canonicalScale: cs, glbCenterY: center.y, glbCenterZ: center.z, rFace: rf };
+    // faceSurfaceZ: front face plane in outer-group units (updated for gs).
+    const fsz = box.max.z * gs;
+
+    return { glbScale: gs, glbCenterY: center.y, faceSurfaceZ: fsz };
   }, [scene]);
 
   const scaleX = profile ? (profile.headProportions.width  / 1.6) : 1;
   const scaleY = profile ? (profile.headProportions.height / 2.2) : 1;
 
-  // Two-level group:
-  //  outer — applies the profile's non-uniform head-proportion scale around origin
-  //  inner — scales the GLB to canonical size and shifts its ear midpoint to y = 0
+  // Three-level group:
+  //  model-scale — uniform 1.5× to accommodate the larger head+neck+shoulders model;
+  //                Y_OFFSET shifts the assembly down so the face lands on the mesh.
+  //  outer       — applies the profile's non-uniform head-proportion scale around origin
+  //  inner       — scales the GLB to canonical size and shifts its ear midpoint to y = 0
   //
-  // FaceHead is intentionally placed OUTSIDE the outer group so the non-uniform
-  // scaleY doesn't double-compress the face mesh (landmarks are already in the
-  // correct proportional scene space from landmarksToScene).
+  // FaceHead lives INSIDE the outer group so it scales with the head model.
+  // outerScaleY only cancels the non-uniform scaleY; the uniform MODEL_SCALE
+  // does not distort face proportions, so it does not need to be passed through.
+  const MODEL_SCALE = 1.5;
+  // Face center sits above y=0 in outer-group space (face is in the upper
+  // portion of the head+neck+shoulders model).  After glbScale amplification
+  // this offset grows; FACE_Y_CORRECTION cancels it so the GLB face aligns
+  // with the MediaPipe mesh center at y=0.  Tune if still misaligned.
+  const FACE_Y_CORRECTION = -0.5; // outer-group units
+  // Shift the whole assembly (GLB + FaceHead) down for scene framing.
+  const Y_OFFSET = -0.5;
+
   return (
-    <>
+    <group scale={[MODEL_SCALE, MODEL_SCALE, MODEL_SCALE]} position={[0, Y_OFFSET, 0]}>
       <group scale={[scaleX, scaleY, scaleX]}>
         <group
-          position={[0, -(glbCenterY * canonicalScale), 0]}
-          scale={[canonicalScale, canonicalScale, canonicalScale]}
+          position={[0, -(glbCenterY * glbScale) + FACE_Y_CORRECTION, 0]}
+          scale={[glbScale, glbScale, glbScale]}
         >
           <primitive object={scene} castShadow receiveShadow />
         </group>
+        {profile?.faceScanData && (
+          // Z-offset places the face mesh flush on the head model's front surface.
+          // scaleX=1 always, so Z is unaffected by the outer group's scale.
+          <group position={[0, 0, faceSurfaceZ]}>
+            <FaceHead faceScanData={profile.faceScanData} outerScaleY={scaleY} />
+          </group>
+        )}
       </group>
-      {profile?.faceScanData && (
-        // Z-offset to the head's Z center (in canonical world units, same as
-        // scaleX=1 means no Z distortion from the outer group).
-        <group position={[0, 0, glbCenterZ * canonicalScale]}>
-          <FaceHead faceScanData={profile.faceScanData} rFace={rFace} />
-        </group>
-      )}
-    </>
+    </group>
   );
 }
 
@@ -206,7 +218,7 @@ function HairZone({ position, baseScale, lengthScale, messiness, colorRGB }: Hai
   });
 
   return (
-    <mesh ref={meshRef} position={position} castShadow>
+    <mesh ref={meshRef} position={position} castShadow renderOrder={2}>
       <boxGeometry args={[baseScale[0], baseScale[1] * lengthScale, baseScale[2]]} />
       <meshStandardMaterial color={colorRGB} roughness={0.9} metalness={0.0} />
     </mesh>

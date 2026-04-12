@@ -4,12 +4,15 @@
 // FaceHead — renders the user's face as a structural 3D mesh
 //
 // Pipeline:
-//  1. Map x, y landmarks to scene space (ear-to-ear = 1.6 units)
-//  2. Project z onto the front hemisphere of radius `rFace`
-//     — passed in from the parent so it matches the actual GLB
-//       head model's front face depth (measured at runtime)
+//  1. Map x, y landmarks to scene space (ear-to-ear = 1.6 units).
+//     outerScaleY cancels the non-uniform Y applied by the parent
+//     group so the face isn't double-compressed.
+//  2. Flat z projection: z = -p.z * zFeatureScale
+//     (nose protrudes, eye sockets recess, forehead is roughly flat)
+//     No hemisphere baseline — the head model has a flat face.
 //  3. Index with canonical MediaPipe triangulation (898 triangles)
-//  4. Solid skin-toned material lit by scene lights
+//  4. Solid skin-toned material with polygonOffset so it sits on
+//     top of the head model without z-fighting.
 // ============================================================
 
 import { useMemo, useRef, useEffect } from 'react';
@@ -22,80 +25,136 @@ function landmarksToScene(
   landmarks: FaceScanData['landmarks'],
   imageWidth: number,
   imageHeight: number,
-  rFace: number,
+  outerScaleY: number,
 ): Float32Array {
   const lm = landmarks;
 
   const earToEarNorm = Math.abs(lm[454].x - lm[234].x);
-  const scale  = 1.6 / Math.max(earToEarNorm, 0.01);
+  const scale   = 1.6 / Math.max(earToEarNorm, 0.01);
   const centerX = (lm[234].x + lm[454].x) / 2;
   const centerY = (lm[234].y + lm[454].y) / 2;
-  const yScale  = scale * (imageHeight / imageWidth);
 
-  // MediaPipe Z encodes facial topography: nose is most negative (closest
-  // to camera), eye sockets and temples slightly positive.  After negation
-  // this becomes the forward protrusion at each landmark.
-  // Fixed constant — MediaPipe z is already normalized to face scale, so
-  // scaling by the XY scale factor was over-exaggerating nose protrusion.
-  const zFeatureScale = 0.4;
+  // yScale: aspect-ratio correction (normalized y ≠ normalized x in non-square
+  // video) divided by outerScaleY to cancel the parent group's non-uniform Y
+  // scale, so the face isn't compressed a second time.
+  const yScale = scale * (imageHeight / imageWidth) / outerScaleY;
+
+  // MediaPipe z is in the same normalized unit as x/y (scaled by image width).
+  // Multiply by scale to convert to scene units, then by 0.45 to keep the
+  // nose protrusion physically plausible (~8–12% of face width).
+  const zFeatureScale = scale * 0.45;
+
+  // ── Mesh sizing & placement ────────────────────────────────────────────────
+  // Find the top/bottom Y extents of the original (unscaled) face in scene units.
+  // minY_mp = smallest MediaPipe y = topmost point on screen (landmark ~10).
+  let minY_mp = Infinity, maxY_mp = -Infinity;
+  lm.forEach(p => {
+    if (p.y < minY_mp) minY_mp = p.y;
+    if (p.y > maxY_mp) maxY_mp = p.y;
+  });
+  // Original top-edge Y in scene space (positive = up in Three.js).
+  const originalTopY  = -(minY_mp - centerY) * yScale;
+  // Original face height (used to compute the z sink).
+  const faceHeight    = (maxY_mp - minY_mp) * yScale;
+
+  // Scale the mesh to 72% of its natural size.
+  const MESH_SCALE = 0.792; // 0.72 × 1.10
+  // After scaling, the top edge drops to originalTopY * MESH_SCALE.
+  // Add the difference back so the top stays where it was.
+  const yShift = originalTopY * (1 - MESH_SCALE);
+  // Sink the mesh back toward the head surface by 1/6 of the face height.
+  const zShift = -faceHeight / 22;
 
   const positions = new Float32Array(lm.length * 3);
   lm.forEach((p, i) => {
-    const x  =  (p.x - centerX) * scale;
-    const y  = -(p.y - centerY) * yScale;
-
-    // Sphere baseline: smooth curvature that matches the head surface
-    const r2      = rFace * rFace - x * x - y * y;
-    const zSphere = r2 > 0 ? Math.sqrt(r2) : 0;
-
-    // Feature offset: adds nose bridge/tip protrusion, eye socket concavity,
-    // brow ridge, jaw — the actual facial topology from the scan
-    const zFeature = -p.z * zFeatureScale;
+    const x = (p.x - centerX) * scale * MESH_SCALE;
+    const y = -(p.y - centerY) * yScale * MESH_SCALE + yShift;
+    // Flat projection: just feature depth — nose tip forward, eye sockets back.
+    const z = -p.z * zFeatureScale + zShift;
 
     positions[i * 3]     = x;
     positions[i * 3 + 1] = y;
-    positions[i * 3 + 2] = zSphere + zFeature;
+    positions[i * 3 + 2] = z;
   });
   return positions;
 }
 
 // ── Build geometry ─────────────────────────────────────────────
-function buildFaceGeometry(faceScanData: FaceScanData, rFace: number): THREE.BufferGeometry {
+function buildFaceGeometry(faceScanData: FaceScanData, outerScaleY: number): THREE.BufferGeometry {
   const { landmarks, imageWidth, imageHeight } = faceScanData;
   const geo = new THREE.BufferGeometry();
   geo.setAttribute(
     'position',
-    new THREE.BufferAttribute(landmarksToScene(landmarks, imageWidth, imageHeight, rFace), 3),
+    new THREE.BufferAttribute(landmarksToScene(landmarks, imageWidth, imageHeight, outerScaleY), 3),
   );
   geo.setIndex(FacemeshDatas.TRIANGULATION as number[]);
   geo.computeVertexNormals();
   return geo;
 }
 
+// ── Real-time vertex update ────────────────────────────────────
+//
+// Call this from a useFrame loop when live landmark data arrives.
+// Mutates the existing BufferGeometry in-place (zero allocation) instead of
+// rebuilding geometry each frame.
+//
+// Anchor landmarks — bone-proximate, expression-stable.  Use these 9 points
+// to compute a rigid transform (centroid + SVD) that maps the reference scan
+// frame to the current frame before applying per-landmark deformation, which
+// eliminates global drift / mask sliding:
+//
+//   10  — forehead center (hairline midpoint)
+//   127 — left temple (temporal bone)
+//   356 — right temple (temporal bone)
+//   116 — left cheekbone (zygomatic arch)
+//   345 — right cheekbone (zygomatic arch)
+//     6 — nose bridge (nasal bone — most stable)
+//   234 — left ear root (jaw anchor)
+//   454 — right ear root (jaw anchor)
+//   152 — chin (mental protuberance)
+//
+export function updateFaceMeshPositions(
+  geo: THREE.BufferGeometry,
+  landmarks: Array<{ x: number; y: number; z: number }>,
+  imageWidth: number,
+  imageHeight: number,
+  outerScaleY: number,
+): void {
+  const attr = geo.attributes.position as THREE.BufferAttribute;
+  const positions = landmarksToScene(landmarks, imageWidth, imageHeight, outerScaleY);
+  (attr.array as Float32Array).set(positions);
+  attr.needsUpdate = true;
+  geo.computeVertexNormals();
+}
+
 // ── Component ──────────────────────────────────────────────────
 interface FaceHeadProps {
   faceScanData: FaceScanData;
-  /** Hemisphere projection radius — should match the head model's
-   *  front face Z depth in canonical pre-scale space.
-   *  Derived at runtime from the GLB bounding box in CanonicalHeadGLB. */
-  rFace: number;
+  /** The Y scale applied by the parent group (headHeight / 2.2).
+   *  Passed so landmarksToScene can cancel it and avoid double-compression. */
+  outerScaleY: number;
 }
 
-export default function FaceHead({ faceScanData, rFace }: FaceHeadProps) {
+export default function FaceHead({ faceScanData, outerScaleY }: FaceHeadProps) {
   const meshRef = useRef<THREE.Mesh>(null!);
 
   const geometry = useMemo(
-    () => buildFaceGeometry(faceScanData, rFace),
+    () => buildFaceGeometry(faceScanData, outerScaleY),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [faceScanData, rFace],
+    [faceScanData, outerScaleY],
   );
 
   const material = useMemo(
     () => new THREE.MeshStandardMaterial({
-      color:     '#e8be9a',
-      roughness: 0.82,
-      metalness: 0.0,
-      side:      THREE.FrontSide,
+      color:              '#e8be9a',
+      roughness:          0.82,
+      metalness:          0.0,
+      side:               THREE.FrontSide,
+      // depthTest:false lets the face mesh always win over the head GLB surface,
+      // even where the head's geometry protrudes past the face mesh z.
+      // Correct hair-over-face occlusion is restored by giving hair renderOrder=2
+      // (see HairZone in HairScene.tsx) so hair depth-tests against this mesh.
+      depthTest:          false,
     }),
     [],
   );
@@ -108,6 +167,6 @@ export default function FaceHead({ faceScanData, rFace }: FaceHeadProps) {
   }, [geometry, material]);
 
   return (
-    <mesh ref={meshRef} geometry={geometry} material={material} castShadow receiveShadow />
+    <mesh ref={meshRef} geometry={geometry} material={material} castShadow receiveShadow renderOrder={1} />
   );
 }
