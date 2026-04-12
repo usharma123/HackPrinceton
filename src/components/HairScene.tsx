@@ -16,7 +16,7 @@
 'use client';
 
 import { useRef, useMemo, useEffect, Suspense } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
+import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { HairParams, UserHeadProfile } from '@/types';
@@ -88,6 +88,13 @@ function computeZones(profile: UserHeadProfile): HairZones {
       baseScale: [0.75 * widthRatio, 0.7, backBlockD],
     },
   };
+}
+
+// Enables material-level clip planes (must run inside Canvas).
+function EnableLocalClipping() {
+  const { gl } = useThree();
+  useEffect(() => { gl.localClippingEnabled = true; }, [gl]);
+  return null;
 }
 
 // ── Sub-components ──────────────────────────────────────────
@@ -196,14 +203,27 @@ function CanonicalHeadGLB({ profile }: HeadMeshProps) {
   // Recolor the GLB's baked materials to match the FaceHead skin tone.
   useEffect(() => {
     const color = new THREE.Color('#e8be9a');
+    // Clip the GLB head so it doesn't protrude forward past the face surface.
+    // The clip plane (world space) removes geometry with world-Z > clipZ,
+    // which is everything in front of 90% of the face surface depth.
+    // The MediaPipe face (depthTest:false) covers this clipped area from the front,
+    // so no gap is visible — but the GLB edge no longer pokes out from the side.
+    // THREE.js clips points where dot(normal, p) + constant < 0.
+    // Normal (0,0,-1), constant +clipZ → clips where -z + clipZ < 0 → z > clipZ.
+    // This removes geometry in front of clipZ (the protruding front face of the GLB).
+    const clipZ = faceSurfaceZ * scaleX * MODEL_SCALE * 0.90;
+    const clipPlane = new THREE.Plane(new THREE.Vector3(0, 0, -1), clipZ);
     scene.traverse((child) => {
       if (!(child instanceof THREE.Mesh)) return;
       const mats = Array.isArray(child.material) ? child.material : [child.material];
       mats.forEach((m) => {
-        if (m instanceof THREE.MeshStandardMaterial) m.color.copy(color);
+        if (m instanceof THREE.MeshStandardMaterial) {
+          m.color.copy(color);
+          m.clippingPlanes = [clipPlane];
+        }
       });
     });
-  }, [scene]);
+  }, [scene, faceSurfaceZ, scaleX]);
 
   const MODEL_SCALE = 1.5;
   // Face center sits above y=0 in outer-group space (face is in the upper
@@ -282,6 +302,7 @@ interface SceneProps {
 function Scene({ params, colorRGB, zones, profile }: SceneProps) {
   return (
     <>
+      <EnableLocalClipping />
       <ambientLight intensity={0.5} />
       <directionalLight position={[5, 10, 5]}  intensity={1.0} castShadow />
       <directionalLight position={[0, 2, 5]}   intensity={0.8} />
