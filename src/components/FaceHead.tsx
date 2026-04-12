@@ -26,6 +26,7 @@ function landmarksToScene(
   imageWidth: number,
   imageHeight: number,
   outerScaleY: number,
+  chinTargetY?: number,
 ): Float32Array {
   const lm = landmarks;
 
@@ -62,13 +63,23 @@ function landmarksToScene(
   // After scaling, the top edge drops to originalTopY * MESH_SCALE.
   // Add the difference back so the top stays where it was.
   const yShift = originalTopY * (1 - MESH_SCALE);
-  // Sink the mesh back toward the head surface by 1/6 of the face height.
-  const zShift = -faceHeight / 22;
+  // Sink the mesh back toward the head surface by 1/22 of the face height.
+  const zShift = -faceHeight / 12;
+
+  // ── Chin alignment ────────────────────────────────────────────────────────
+  // If the caller supplies chinTargetY (GLB chin in outer-group local space),
+  // compute the vertical delta that moves lm[152] onto the GLB chin.
+  // chinTargetY is in outer-group space; divide by outerScaleY to convert to
+  // FaceHead-local space (the outer group multiplies local Y by outerScaleY).
+  const y_chin_local = -(lm[152].y - centerY) * yScale * MESH_SCALE + yShift;
+  const chinDelta = chinTargetY !== undefined
+    ? chinTargetY / outerScaleY - y_chin_local
+    : 0;
 
   const positions = new Float32Array(lm.length * 3);
   lm.forEach((p, i) => {
     const x = (p.x - centerX) * scale * MESH_SCALE;
-    const y = -(p.y - centerY) * yScale * MESH_SCALE + yShift;
+    const y = -(p.y - centerY) * yScale * MESH_SCALE + yShift + chinDelta;
     // Flat projection: just feature depth — nose tip forward, eye sockets back.
     const z = -p.z * zFeatureScale + zShift;
 
@@ -80,12 +91,12 @@ function landmarksToScene(
 }
 
 // ── Build geometry ─────────────────────────────────────────────
-function buildFaceGeometry(faceScanData: FaceScanData, outerScaleY: number): THREE.BufferGeometry {
+function buildFaceGeometry(faceScanData: FaceScanData, outerScaleY: number, chinTargetY?: number): THREE.BufferGeometry {
   const { landmarks, imageWidth, imageHeight } = faceScanData;
   const geo = new THREE.BufferGeometry();
   geo.setAttribute(
     'position',
-    new THREE.BufferAttribute(landmarksToScene(landmarks, imageWidth, imageHeight, outerScaleY), 3),
+    new THREE.BufferAttribute(landmarksToScene(landmarks, imageWidth, imageHeight, outerScaleY, chinTargetY), 3),
   );
   geo.setIndex(FacemeshDatas.TRIANGULATION as number[]);
   geo.computeVertexNormals();
@@ -119,9 +130,10 @@ export function updateFaceMeshPositions(
   imageWidth: number,
   imageHeight: number,
   outerScaleY: number,
+  chinTargetY?: number,
 ): void {
   const attr = geo.attributes.position as THREE.BufferAttribute;
-  const positions = landmarksToScene(landmarks, imageWidth, imageHeight, outerScaleY);
+  const positions = landmarksToScene(landmarks, imageWidth, imageHeight, outerScaleY, chinTargetY);
   (attr.array as Float32Array).set(positions);
   attr.needsUpdate = true;
   geo.computeVertexNormals();
@@ -133,15 +145,18 @@ interface FaceHeadProps {
   /** The Y scale applied by the parent group (headHeight / 2.2).
    *  Passed so landmarksToScene can cancel it and avoid double-compression. */
   outerScaleY: number;
+  /** GLB chin Y in outer-group local space. When provided, the whole face mesh
+   *  is shifted vertically so lm[152] (chin) aligns with the canonical head chin. */
+  chinTargetY?: number;
 }
 
-export default function FaceHead({ faceScanData, outerScaleY }: FaceHeadProps) {
+export default function FaceHead({ faceScanData, outerScaleY, chinTargetY }: FaceHeadProps) {
   const meshRef = useRef<THREE.Mesh>(null!);
 
   const geometry = useMemo(
-    () => buildFaceGeometry(faceScanData, outerScaleY),
+    () => buildFaceGeometry(faceScanData, outerScaleY, chinTargetY),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [faceScanData, outerScaleY],
+    [faceScanData, outerScaleY, chinTargetY],
   );
 
   const material = useMemo(

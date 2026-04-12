@@ -15,7 +15,7 @@
 
 'use client';
 
-import { useRef, useMemo, Suspense } from 'react';
+import { useRef, useMemo, useEffect, Suspense } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
@@ -107,7 +107,7 @@ function HeadMesh({ profile }: HeadMeshProps) {
     <group scale={[scaleX, scaleY, scaleX]}>
       <mesh castShadow receiveShadow>
         <sphereGeometry args={[1, 64, 64]} />
-        <meshStandardMaterial color="#f5c9a0" roughness={0.8} metalness={0.0} />
+        <meshStandardMaterial color="#e8be9a" roughness={0.8} metalness={0.0} />
       </mesh>
       {profile?.faceScanData && (
         <group position={[0, 0, 1.0]}>
@@ -129,7 +129,7 @@ function HeadMesh({ profile }: HeadMeshProps) {
 function CanonicalHeadGLB({ profile }: HeadMeshProps) {
   const { scene } = useGLTF('/models/head.glb');
 
-  const { glbScale, glbCenterY, faceSurfaceZ } = useMemo(() => {
+  const { glbScale, glbCenterY, faceSurfaceZ, chinTargetY } = useMemo(() => {
     scene.updateWorldMatrix(true, true);
     const box    = new THREE.Box3().setFromObject(scene);
     const size   = box.getSize(new THREE.Vector3());
@@ -145,7 +145,40 @@ function CanonicalHeadGLB({ profile }: HeadMeshProps) {
     // faceSurfaceZ: front face plane in outer-group units (updated for gs).
     const fsz = box.max.z * gs;
 
-    return { glbScale: gs, glbCenterY: center.y, faceSurfaceZ: fsz };
+    // ── GLB chin detection ───────────────────────────────────────────────────
+    // The canonical head is the most-protruding oval (z near box.max.z).
+    // Scan all mesh vertices whose world-space Z > 75% of box.max.z to find
+    // the bottommost point on that oval — the chin.
+    const FACE_Y_CORRECTION = -0.5; // must match the constant used in the JSX below
+    const frontThreshold = box.max.z * 0.75;
+    let glbChinY_native    = Infinity;
+    let glbFaceTopY_native = -Infinity;
+    const tmp = new THREE.Vector3();
+    scene.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      const pos = child.geometry.attributes.position;
+      if (!pos) return;
+      for (let i = 0; i < pos.count; i++) {
+        tmp.fromBufferAttribute(pos, i).applyMatrix4(child.matrixWorld);
+        if (tmp.z > frontThreshold) {
+          if (tmp.y < glbChinY_native)    glbChinY_native    = tmp.y;
+          if (tmp.y > glbFaceTopY_native) glbFaceTopY_native = tmp.y;
+        }
+      }
+    });
+    // Raise the raw chin point by 1/20th of the front-face oval height so the
+    // target lands slightly above the very bottom edge of the mesh geometry.
+    const glbFaceHeight_native = glbFaceTopY_native - glbChinY_native;
+    const adjustedChinY = glbChinY_native + glbFaceHeight_native / 20;
+
+    // Convert GLB-native Y → outer-group local space:
+    //   inner group: position = -(center.y * gs) + FACE_Y_CORRECTION, scale = gs
+    //   vertex y in outer group = (vertex_y_native - center.y) * gs + FACE_Y_CORRECTION
+    const cty = glbChinY_native < Infinity
+      ? (adjustedChinY - center.y) * gs + FACE_Y_CORRECTION
+      : undefined;
+
+    return { glbScale: gs, glbCenterY: center.y, faceSurfaceZ: fsz, chinTargetY: cty };
   }, [scene]);
 
   const scaleX = profile ? (profile.headProportions.width  / 1.6) : 1;
@@ -160,6 +193,18 @@ function CanonicalHeadGLB({ profile }: HeadMeshProps) {
   // FaceHead lives INSIDE the outer group so it scales with the head model.
   // outerScaleY only cancels the non-uniform scaleY; the uniform MODEL_SCALE
   // does not distort face proportions, so it does not need to be passed through.
+  // Recolor the GLB's baked materials to match the FaceHead skin tone.
+  useEffect(() => {
+    const color = new THREE.Color('#e8be9a');
+    scene.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      const mats = Array.isArray(child.material) ? child.material : [child.material];
+      mats.forEach((m) => {
+        if (m instanceof THREE.MeshStandardMaterial) m.color.copy(color);
+      });
+    });
+  }, [scene]);
+
   const MODEL_SCALE = 1.5;
   // Face center sits above y=0 in outer-group space (face is in the upper
   // portion of the head+neck+shoulders model).  After glbScale amplification
@@ -182,7 +227,7 @@ function CanonicalHeadGLB({ profile }: HeadMeshProps) {
           // Z-offset places the face mesh flush on the head model's front surface.
           // scaleX=1 always, so Z is unaffected by the outer group's scale.
           <group position={[0, 0, faceSurfaceZ]}>
-            <FaceHead faceScanData={profile.faceScanData} outerScaleY={scaleY} />
+            <FaceHead faceScanData={profile.faceScanData} outerScaleY={scaleY} chinTargetY={chinTargetY} />
           </group>
         )}
       </group>
