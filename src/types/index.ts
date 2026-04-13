@@ -11,6 +11,16 @@ export interface HairParams {
   taper: number;        // 0.0 – 1.0  (gradient falloff from crown)
 }
 
+export interface FaceScanData {
+  // Raw MediaPipe landmarks at scan completion (468 points, normalized 0–1)
+  landmarks: Array<{ x: number; y: number; z: number }>;
+  // Base64 snapshot of the camera frame (used as face texture)
+  imageDataUrl: string;
+  // Image dimensions the landmarks were captured at
+  imageWidth: number;
+  imageHeight: number;
+}
+
 export interface UserHeadProfile {
   // ── Scan Phase Output (MediaPipe) ──────────────────────────
   headProportions: {
@@ -28,6 +38,9 @@ export interface UserHeadProfile {
     backLength: number;
     flatness: number;      // 0 = very flat, 1 = very voluminous
   };
+
+  // ── Optional face mesh data (when full scan is performed) ──
+  faceScanData?: FaceScanData;
 
   // ── State for RENDER + EDIT phases ─────────────────────────
   currentStyle: {

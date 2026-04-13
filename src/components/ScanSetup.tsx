@@ -73,6 +73,7 @@ function mergeProfile(
     headProportions: scanned.headProportions,
     anchors:         scanned.anchors,
     hairMeasurements: scanned.hairMeasurements,
+    faceScanData:    scanned.faceScanData,
     // Overlay style choices from the form
     currentStyle: { preset, hairType, colorRGB: '#3b1f0a', params },
   };
@@ -124,14 +125,14 @@ export default function ScanSetup({ onComplete }: ScanSetupProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-gray-950 bg-opacity-95">
-      <div className="bg-gray-900 rounded-2xl p-8 w-full max-w-sm flex flex-col gap-6 shadow-2xl">
+      <div className="bg-gray-900 rounded-2xl p-8 w-full max-w-md flex flex-col gap-6 shadow-2xl">
 
         <div>
           <h1 className="text-2xl font-bold text-white">ShapeUp</h1>
-          <p className="text-gray-400 text-sm mt-1">Tell us about your hair to get started</p>
+          <p className="text-gray-400 text-sm mt-1">Scan your face to get started</p>
         </div>
 
-        {/* Camera scan — hidden but mounted when permission granted */}
+        {/* Camera — shown prominently at top when granted */}
         {(cameraState === 'granted' || cameraState === 'scan_complete') && (
           <ScanCamera
             hairType={hairType}
@@ -140,9 +141,11 @@ export default function ScanSetup({ onComplete }: ScanSetupProps) {
           />
         )}
 
-        {/* Scan status indicator */}
+        {/* Requesting state */}
         {cameraState === 'requesting' && (
-          <p className="text-xs text-gray-500 text-center">Requesting camera…</p>
+          <div className="w-full rounded-2xl bg-gray-800 flex items-center justify-center text-gray-400 text-sm" style={{ aspectRatio: '1/1' }}>
+            Requesting camera…
+          </div>
         )}
 
         {/* Form questions */}
