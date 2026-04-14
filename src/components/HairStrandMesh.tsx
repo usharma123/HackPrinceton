@@ -5,7 +5,6 @@ import * as THREE from 'three';
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js';
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
-import { ConvexGeometry } from 'three/examples/jsm/geometries/ConvexGeometry.js';
 import { useThree } from '@react-three/fiber';
 import { parsePLY } from '@/lib/parsePLY';
 
@@ -20,7 +19,6 @@ interface HairStrandMeshProps {
 
 interface HairData {
   lineSegs: LineSegments2;
-  capGeo: THREE.BufferGeometry;
 }
 
 export default function HairStrandMesh({
@@ -29,7 +27,7 @@ export default function HairStrandMesh({
   scale = 1,
   position = [0, 0, 0],
   renderOrder = 0,
-  lineWidth = 1.2,
+  lineWidth = 1,
 }: HairStrandMeshProps) {
   const { size } = useThree();
   const [hairData, setHairData] = useState<HairData | null>(null);
@@ -43,7 +41,6 @@ export default function HairStrandMesh({
       const posAttr = geo.attributes.position as THREE.BufferAttribute;
       const indexAttr = geo.getIndex()!;
       const edgeCount = indexAttr.count / 2;
-      const vertexCount = posAttr.count;
 
       // ── Strand lines ────────────────────────────────────────────────────────
       const segments: number[] = [];
@@ -70,30 +67,9 @@ export default function HairStrandMesh({
       ls.position.set(...position);
       ls.renderOrder = renderOrder;
 
-      // ── Convex hull cap ──────────────────────────────────────────────────────
-      // Exclude the frontmost vertices (curtain bangs) from the hull — they span
-      // the full width at high Z and cause the hull to cover the face.
-      // Only use vertices in the back 60% of the Z range.
-      let minZ = Infinity, maxZ = -Infinity;
-      for (let i = 0; i < vertexCount; i++) {
-        const z = posAttr.getZ(i);
-        if (z < minZ) minZ = z;
-        if (z > maxZ) maxZ = z;
-      }
-      const zCutoff = minZ + (maxZ - minZ) * 0.6;
-
-      const points: THREE.Vector3[] = [];
-      for (let i = 0; i < vertexCount; i += 4) {
-        if (posAttr.getZ(i) > zCutoff) continue;
-        points.push(new THREE.Vector3(
-          posAttr.getX(i), posAttr.getY(i), posAttr.getZ(i),
-        ));
-      }
-      const capGeo = new ConvexGeometry(points);
-
       geo.dispose();
 
-      const data: HairData = { lineSegs: ls, capGeo };
+      const data: HairData = { lineSegs: ls };
       hairDataRef.current = data;
       setHairData(data);
     });
@@ -102,7 +78,6 @@ export default function HairStrandMesh({
       if (hairDataRef.current) {
         hairDataRef.current.lineSegs.geometry.dispose();
         (hairDataRef.current.lineSegs.material as LineMaterial).dispose();
-        hairDataRef.current.capGeo.dispose();
         hairDataRef.current = null;
       }
     };
@@ -125,20 +100,5 @@ export default function HairStrandMesh({
 
   if (!hairData) return null;
 
-  return (
-    <>
-      {/* Solid convex hull cap — fills the interior, renders behind strands */}
-      <mesh
-        geometry={hairData.capGeo}
-        scale={[scale, scale, scale]}
-        position={position}
-        renderOrder={renderOrder - 1}
-      >
-        <meshStandardMaterial color={color} roughness={0.9} metalness={0.0} />
-      </mesh>
-
-      {/* Strand lines on top */}
-      <primitive object={hairData.lineSegs} />
-    </>
-  );
+  return <primitive object={hairData.lineSegs} />;
 }
