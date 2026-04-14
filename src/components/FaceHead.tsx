@@ -58,13 +58,14 @@ function landmarksToScene(
   // Original face height (used to compute the z sink).
   const faceHeight    = (maxY_mp - minY_mp) * yScale;
 
-  // Scale the mesh to 72% of its natural size.
-  const MESH_SCALE = 0.792; // 0.72 × 1.10
-  // After scaling, the top edge drops to originalTopY * MESH_SCALE.
-  // Add the difference back so the top stays where it was.
-  const yShift = originalTopY * (1 - MESH_SCALE);
+  // Scale the mesh to 67.32% of its natural size (0.792 × 0.85).
+  const MESH_SCALE = 0.720;
+  // After scaling, the bottom edge rises to originalBottomY * MESH_SCALE.
+  // Add the difference back so the bottom stays where it was.
+  const originalBottomY = originalTopY - faceHeight;
+  const yShift = originalBottomY * (1 - MESH_SCALE);
   // Sink the mesh back toward the head surface by 1/22 of the face height.
-  const zShift = -faceHeight / 12;
+  const zShift = -faceHeight / 24;
 
   // ── Chin alignment ────────────────────────────────────────────────────────
   // If the caller supplies chinTargetY (GLB chin in outer-group local space),
@@ -161,15 +162,9 @@ export default function FaceHead({ faceScanData, outerScaleY, chinTargetY }: Fac
 
   const material = useMemo(
     () => new THREE.MeshStandardMaterial({
-      color:              '#e8be9a',
-      roughness:          0.82,
-      metalness:          0.0,
-      side:               THREE.FrontSide,
-      // depthTest:false lets the face mesh always win over the head GLB surface,
-      // even where the head's geometry protrudes past the face mesh z.
-      // Correct hair-over-face occlusion is restored by giving hair renderOrder=2
-      // (see HairZone in HairScene.tsx) so hair depth-tests against this mesh.
-      depthTest:          false,
+      color:     '#e8be9a',
+      roughness: 0.82,
+      metalness: 0.0,
     }),
     [],
   );
@@ -182,6 +177,6 @@ export default function FaceHead({ faceScanData, outerScaleY, chinTargetY }: Fac
   }, [geometry, material]);
 
   return (
-    <mesh ref={meshRef} geometry={geometry} material={material} castShadow receiveShadow renderOrder={1} />
+    <mesh ref={meshRef} geometry={geometry} material={material} castShadow receiveShadow />
   );
 }
