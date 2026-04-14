@@ -42,18 +42,23 @@ function applyKajiyaKay(mat: LineMaterial): void {
         varying vec3 vViewPos;
         varying vec3 vKKLight1;
         varying vec3 vKKLight2;
+        varying vec3 vRadialNorm;
         void main() {`,
     );
 
-    // After start/end are computed in view space, derive tangent + lights
+    // After start/end are computed in view space, derive tangent + lights +
+    // radial normal (position used as proxy for outward surface normal on a
+    // roughly-spherical head; gives lit/shadow sides to the head).
     shader.vertexShader = shader.vertexShader.replace(
       'vec4 end = modelViewMatrix * vec4( instanceEnd, 1.0 );',
       /* glsl */`
         vec4 end = modelViewMatrix * vec4( instanceEnd, 1.0 );
-        vKKTangent = normalize((end - start).xyz);
-        vViewPos   = (position.y < 0.5) ? start.xyz : end.xyz;
-        vKKLight1  = normalize(mat3(viewMatrix) * uKKLight1WS);
-        vKKLight2  = normalize(mat3(viewMatrix) * uKKLight2WS);`,
+        vKKTangent  = normalize((end - start).xyz);
+        vViewPos    = (position.y < 0.5) ? start.xyz : end.xyz;
+        vKKLight1   = normalize(mat3(viewMatrix) * uKKLight1WS);
+        vKKLight2   = normalize(mat3(viewMatrix) * uKKLight2WS);
+        vec3 instancePos = (position.y < 0.5) ? instanceStart : instanceEnd;
+        vRadialNorm = normalize(mat3(modelViewMatrix) * instancePos);`,
     );
 
     // ── Fragment shader ──────────────────────────────────────────────────────
@@ -65,6 +70,7 @@ function applyKajiyaKay(mat: LineMaterial): void {
         varying vec3 vViewPos;
         varying vec3 vKKLight1;
         varying vec3 vKKLight2;
+        varying vec3 vRadialNorm;
         void main() {`,
     );
 
@@ -74,19 +80,36 @@ function applyKajiyaKay(mat: LineMaterial): void {
       /* glsl */`
         vec3  T    = normalize(vKKTangent);
         vec3  V    = normalize(-vViewPos);
+        vec3  N    = normalize(vRadialNorm);
 
         float TL1 = dot(T, vKKLight1); float sinTL1 = sqrt(max(0.0, 1.0 - TL1*TL1));
         float TL2 = dot(T, vKKLight2); float sinTL2 = sqrt(max(0.0, 1.0 - TL2*TL2));
         float TV  = dot(T, V);         float sinTV  = sqrt(max(0.0, 1.0 - TV *TV ));
 
-        float diff = sinTL1 * 1.0 + sinTL2 * 0.8;
+        // KK diffuse, normalized to [0,1] across both lights
+        float diff = (sinTL1 * 1.0 + sinTL2 * 0.8) / 1.8;
+
+        // Position-based facing factor: strands on the shadow side of the head
+        // receive less diffuse. Remap dot(N,L) from [-1,1] → [0,1] with a soft
+        // minimum so the back never goes fully dark.
+        float face1   = dot(N, vKKLight1);
+        float face2   = dot(N, vKKLight2);
+        float face_raw = face1 * 0.7 + face2 * 0.3;
+        float facing  = clamp(face_raw * 0.5 + 0.5, 0.15, 1.0);
+
+        // Self-shadowing proxy: when the strand's surface-normal faces BOTH the
+        // viewer and the lights (e.g. looking down from above with overhead lights),
+        // reduce diffuse to prevent the flat "everything uniformly lit" look.
+        // Has no effect when viewer and light are on opposite sides.
+        float normFacingViewer = max(0.0, dot(N, V));
+        float selfShadow       = 1.0 - normFacingViewer * max(0.0, face_raw) * 0.65;
+
         float spec = pow(max(0.0, TL1*TV + sinTL1*sinTV), 80.0) * 1.0
                    + pow(max(0.0, TL2*TV + sinTL2*sinTV), 80.0) * 0.8;
 
-        // Warm golden specular typical of brown hair
         vec3 specColor = vec3(0.95, 0.78, 0.50);
-        vec3 kkColor   = diffuseColor.rgb * (0.35 + diff * 0.42)
-                       + specColor * spec * 0.12;
+        vec3 kkColor   = diffuseColor.rgb * (0.42 + diff * facing * selfShadow * 0.50)
+                       + specColor * spec * 0.09;
 
         gl_FragColor = vec4(kkColor, alpha);`,
     );
