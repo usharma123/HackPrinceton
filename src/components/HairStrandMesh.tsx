@@ -8,6 +8,91 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { useThree } from '@react-three/fiber';
 import { parsePLY } from '@/lib/parsePLY';
 
+// Scene light directions (world space) — must match HairScene.tsx directionalLights.
+const LIGHT1_WS = new THREE.Vector3(5, 10, 5).normalize();
+const LIGHT2_WS = new THREE.Vector3(0,  2, 5).normalize();
+
+/**
+ * Patch a freshly-created LineMaterial with Kajiya-Kay hair shading.
+ *
+ * LineMaterial expands each edge into a screen-space quad. The two endpoints
+ * are available as `instanceStart` / `instanceEnd` in the vertex shader, so
+ * we derive the strand tangent there and interpolate it to the fragment.
+ *
+ * KK diffuse  = sin(angle(T, L))
+ * KK specular = (T·L · T·V + sin_TL · sin_TV) ^ shininess
+ */
+function applyKajiyaKay(mat: LineMaterial): void {
+  mat.uniforms.uKKLight1WS = { value: LIGHT1_WS.clone() };
+  mat.uniforms.uKKLight2WS = { value: LIGHT2_WS.clone() };
+
+  mat.onBeforeCompile = (shader) => {
+    // Forward the KK uniforms into the actual shader program
+    shader.uniforms.uKKLight1WS = mat.uniforms.uKKLight1WS;
+    shader.uniforms.uKKLight2WS = mat.uniforms.uKKLight2WS;
+
+    // ── Vertex shader ────────────────────────────────────────────────────────
+    // Declare varyings + uniforms before main()
+    shader.vertexShader = shader.vertexShader.replace(
+      'void main() {',
+      /* glsl */`
+        uniform vec3 uKKLight1WS;
+        uniform vec3 uKKLight2WS;
+        varying vec3 vKKTangent;
+        varying vec3 vViewPos;
+        varying vec3 vKKLight1;
+        varying vec3 vKKLight2;
+        void main() {`,
+    );
+
+    // After start/end are computed in view space, derive tangent + lights
+    shader.vertexShader = shader.vertexShader.replace(
+      'vec4 end = modelViewMatrix * vec4( instanceEnd, 1.0 );',
+      /* glsl */`
+        vec4 end = modelViewMatrix * vec4( instanceEnd, 1.0 );
+        vKKTangent = normalize((end - start).xyz);
+        vViewPos   = (position.y < 0.5) ? start.xyz : end.xyz;
+        vKKLight1  = normalize(mat3(viewMatrix) * uKKLight1WS);
+        vKKLight2  = normalize(mat3(viewMatrix) * uKKLight2WS);`,
+    );
+
+    // ── Fragment shader ──────────────────────────────────────────────────────
+    // Declare varyings before main()
+    shader.fragmentShader = shader.fragmentShader.replace(
+      'void main() {',
+      /* glsl */`
+        varying vec3 vKKTangent;
+        varying vec3 vViewPos;
+        varying vec3 vKKLight1;
+        varying vec3 vKKLight2;
+        void main() {`,
+    );
+
+    // Replace the final color output with Kajiya-Kay
+    shader.fragmentShader = shader.fragmentShader.replace(
+      'gl_FragColor = vec4( diffuseColor.rgb, alpha );',
+      /* glsl */`
+        vec3  T    = normalize(vKKTangent);
+        vec3  V    = normalize(-vViewPos);
+
+        float TL1 = dot(T, vKKLight1); float sinTL1 = sqrt(max(0.0, 1.0 - TL1*TL1));
+        float TL2 = dot(T, vKKLight2); float sinTL2 = sqrt(max(0.0, 1.0 - TL2*TL2));
+        float TV  = dot(T, V);         float sinTV  = sqrt(max(0.0, 1.0 - TV *TV ));
+
+        float diff = sinTL1 * 1.0 + sinTL2 * 0.8;
+        float spec = pow(max(0.0, TL1*TV + sinTL1*sinTV), 80.0) * 1.0
+                   + pow(max(0.0, TL2*TV + sinTL2*sinTV), 80.0) * 0.8;
+
+        // Warm golden specular typical of brown hair
+        vec3 specColor = vec3(0.95, 0.78, 0.50);
+        vec3 kkColor   = diffuseColor.rgb * (0.35 + diff * 0.42)
+                       + specColor * spec * 0.12;
+
+        gl_FragColor = vec4(kkColor, alpha);`,
+    );
+  };
+}
+
 interface HairStrandMeshProps {
   url: string;
   color?: string;
@@ -27,7 +112,7 @@ export default function HairStrandMesh({
   scale = 1,
   position = [0, 0, 0],
   renderOrder = 0,
-  lineWidth = 1,
+  lineWidth = 1.2,
 }: HairStrandMeshProps) {
   const { size } = useThree();
   const [hairData, setHairData] = useState<HairData | null>(null);
@@ -38,11 +123,10 @@ export default function HairStrandMesh({
     parsePLY(url).then(geo => {
       if (cancelled) { geo.dispose(); return; }
 
-      const posAttr = geo.attributes.position as THREE.BufferAttribute;
+      const posAttr   = geo.attributes.position as THREE.BufferAttribute;
       const indexAttr = geo.getIndex()!;
       const edgeCount = indexAttr.count / 2;
 
-      // ── Strand lines ────────────────────────────────────────────────────────
       const segments: number[] = [];
       for (let i = 0; i < edgeCount; i++) {
         const a = indexAttr.getX(i * 2);
@@ -61,6 +145,7 @@ export default function HairStrandMesh({
         linewidth: lineWidth,
         resolution: new THREE.Vector2(size.width, size.height),
       });
+      applyKajiyaKay(mat);
 
       const ls = new LineSegments2(lsGeo, mat);
       ls.scale.set(scale, scale, scale);
@@ -90,7 +175,7 @@ export default function HairStrandMesh({
     (hairDataRef.current.lineSegs.material as LineMaterial).resolution.set(size.width, size.height);
   }, [size]);
 
-  // Update color/lineWidth without rebuilding geometry
+  // Update color/lineWidth reactively
   useEffect(() => {
     if (!hairDataRef.current) return;
     const mat = hairDataRef.current.lineSegs.material as LineMaterial;

@@ -163,7 +163,7 @@ function CanonicalHeadGLB({ profile, showFace = true }: HeadMeshProps) {
         {profile?.faceScanData && showFace && (
           // Z-offset places the face mesh flush on the head model's front surface.
           // scaleX=1 always, so Z is unaffected by the outer group's scale.
-          <group position={[0, -faceHeight * 0.08, faceSurfaceZ + faceHeight * 0.05]} rotation={[0.06109, 0, 0]} scale={[0.8, 0.8, 0.8]}>
+          <group position={[0, -faceHeight * 0.08, faceSurfaceZ + faceHeight * 0.05]} rotation={[0.06109, 0, 0]} scale={[0.88, 0.88, 0.88]}>
             <FaceHead faceScanData={profile.faceScanData} outerScaleY={scaleY} chinTargetY={chinTargetY} />
           </group>
         )}
@@ -187,17 +187,18 @@ function CanonicalHead({ profile, showFace }: HeadMeshProps) {
 // Scale 9 brings hair width to ~3.1 units (matching head), matching the observed
 // 50%-too-narrow issue.  Y: PLY_ymin(1.5373)*9=13.84; pos_y = crown(1.26)−13.84=−12.58
 // Z: PLY z-center is −0.016; at scale 9 that's −0.14, so +0.14 re-centers it.
-const HAIR_PLY_SCALE   = 12.060;
-const HAIR_PLY_POS: [number, number, number] = [0, -21.569, 0.386];
+const HAIR_PLY_SCALE   = 13.109;
+const HAIR_PLY_POS: [number, number, number] = [0, -23.349, 0.714];
 
 interface SceneProps {
   colorRGB: string;
   profile?: UserHeadProfile;
   showFace?: boolean;
-  showHair?: boolean;
+  showStrands?: boolean;
+  showDepth?: boolean;
 }
 
-function Scene({ colorRGB, profile, showFace = true, showHair = true }: SceneProps) {
+function Scene({ colorRGB, profile, showFace = true, showStrands = true, showDepth = true }: SceneProps) {
   return (
     <>
       <ambientLight intensity={0.5} />
@@ -208,24 +209,24 @@ function Scene({ colorRGB, profile, showFace = true, showHair = true }: ScenePro
           shares the same GLB bounding-box measurement for rFace. */}
       <CanonicalHead profile={profile} showFace={showFace} />
 
-      {showHair && (
-        <>
-          <HairStrandMesh
-            url="/hair/hair1.ply"
-            color={colorRGB}
-            scale={HAIR_PLY_SCALE}
-            position={HAIR_PLY_POS}
-            lineWidth={0.8}
-          />
-          <HairStrandMesh
-            url="/hair/depth.ply"
-            color={colorRGB}
-            scale={HAIR_PLY_SCALE}
-            position={HAIR_PLY_POS}
-            lineWidth={1}
-            renderOrder={1}
-          />
-        </>
+      {showStrands && (
+        <HairStrandMesh
+          url="/hair/hair1.ply"
+          color={colorRGB}
+          scale={HAIR_PLY_SCALE}
+          position={HAIR_PLY_POS}
+          lineWidth={0.8}
+        />
+      )}
+      {showDepth && (
+        <HairStrandMesh
+          url="/hair/depth.ply"
+          color={colorRGB}
+          scale={HAIR_PLY_SCALE}
+          position={HAIR_PLY_POS}
+          lineWidth={1}
+          renderOrder={1}
+        />
       )}
 
       <OrbitControls
@@ -249,21 +250,23 @@ interface HairSceneProps {
 
 export default function HairScene({ params, colorRGB = '#3b1f0a', profile }: HairSceneProps) {
   const [showFace, setShowFace] = useState(true);
-  const [showHair, setShowHair] = useState(true);
+  const [showStrands, setShowStrands] = useState(true);
+  const [showDepth, setShowDepth] = useState(true);
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <Canvas
         shadows
         camera={{ position: [0, 1, 4], fov: 45 }}
-        style={{ width: '100%', height: '100%' }}
+        style={{ width: '100%', height: '100%', background: '#000000' }}
       >
-        <Scene colorRGB={colorRGB} profile={profile} showFace={showFace} showHair={showHair} />
+        <Scene colorRGB={colorRGB} profile={profile} showFace={showFace} showStrands={showStrands} showDepth={showDepth} />
       </Canvas>
       <div style={{ position: 'absolute', bottom: 12, left: 12, display: 'flex', gap: 6 }}>
         {[
-          { label: 'face', show: showFace, toggle: () => setShowFace(v => !v) },
-          { label: 'hair', show: showHair, toggle: () => setShowHair(v => !v) },
+          { label: 'face',    show: showFace,    toggle: () => setShowFace(v => !v) },
+          { label: 'strands', show: showStrands, toggle: () => setShowStrands(v => !v) },
+          { label: 'depth',   show: showDepth,   toggle: () => setShowDepth(v => !v) },
         ].map(({ label, show, toggle }) => (
           <button key={label} onClick={toggle} style={{
             padding: '4px 10px', fontSize: 12, opacity: 0.6,
