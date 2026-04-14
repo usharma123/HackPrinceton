@@ -58,7 +58,10 @@ function applyKajiyaKay(mat: LineMaterial): void {
         vKKLight1   = normalize(mat3(viewMatrix) * uKKLight1WS);
         vKKLight2   = normalize(mat3(viewMatrix) * uKKLight2WS);
         vec3 instancePos = (position.y < 0.5) ? instanceStart : instanceEnd;
-        vRadialNorm = normalize(mat3(modelViewMatrix) * instancePos);`,
+        // Subtract PLY-space head center so the radial normal correctly
+        // points outward from the head surface, not toward world Y-up.
+        // PLY bbox center is at approx (0, 1.72, -0.016) in model space.
+        vRadialNorm = normalize(mat3(modelViewMatrix) * (instancePos - vec3(0.0, 1.72, -0.016)));`,
     );
 
     // ── Fragment shader ──────────────────────────────────────────────────────
@@ -102,13 +105,13 @@ function applyKajiyaKay(mat: LineMaterial): void {
         // reduce diffuse to prevent the flat "everything uniformly lit" look.
         // Has no effect when viewer and light are on opposite sides.
         float normFacingViewer = max(0.0, dot(N, V));
-        float selfShadow       = 1.0 - normFacingViewer * max(0.0, face_raw) * 0.65;
+        float selfShadow       = max(0.0, 1.0 - normFacingViewer * max(0.0, face_raw) * 0.85);
 
         float spec = pow(max(0.0, TL1*TV + sinTL1*sinTV), 80.0) * 1.0
                    + pow(max(0.0, TL2*TV + sinTL2*sinTV), 80.0) * 0.8;
 
         vec3 specColor = vec3(0.95, 0.78, 0.50);
-        vec3 kkColor   = diffuseColor.rgb * (0.42 + diff * facing * selfShadow * 0.50)
+        vec3 kkColor   = diffuseColor.rgb * (0.30 + diff * facing * selfShadow * 0.65)
                        + specColor * spec * 0.09;
 
         gl_FragColor = vec4(kkColor, alpha);`,
