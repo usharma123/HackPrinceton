@@ -43,7 +43,7 @@ function landmarksToScene(
   // MediaPipe z is in the same normalized unit as x/y (scaled by image width).
   // Multiply by scale to convert to scene units, then by 0.45 to keep the
   // nose protrusion physically plausible (~8–12% of face width).
-  const zFeatureScale = scale * 0.45;
+  const zFeatureScale = scale * 0.63;
 
   // ── Mesh sizing & placement ────────────────────────────────────────────────
   // Find the top/bottom Y extents of the original (unscaled) face in scene units.

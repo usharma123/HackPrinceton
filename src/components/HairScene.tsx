@@ -60,7 +60,7 @@ function HeadMesh({ profile }: HeadMeshProps) {
 // of the head's front face surface in canonical pre-scale space.  FaceHead uses
 // this so its hemisphere projection lands on the head surface — no guesswork.
 function CanonicalHeadGLB({ profile }: HeadMeshProps) {
-  const { scene } = useGLTF('/models/head.glb');
+  const { scene } = useGLTF('/models/head.glb?v=5');
 
   const { glbScale, glbCenterY, faceSurfaceZ, chinTargetY, faceHeight } = useMemo(() => {
     scene.updateWorldMatrix(true, true);
@@ -162,7 +162,7 @@ function CanonicalHeadGLB({ profile }: HeadMeshProps) {
         {profile?.faceScanData && (
           // Z-offset places the face mesh flush on the head model's front surface.
           // scaleX=1 always, so Z is unaffected by the outer group's scale.
-          <group position={[0, 0, faceSurfaceZ + faceHeight * 0.09]}>
+          <group position={[0, -faceHeight * 0.03, faceSurfaceZ + faceHeight * 0.08]} rotation={[-0.00873, 0, 0]}>
             <FaceHead faceScanData={profile.faceScanData} outerScaleY={scaleY} chinTargetY={chinTargetY} />
           </group>
         )}
@@ -187,7 +187,7 @@ function CanonicalHead({ profile }: HeadMeshProps) {
 // 50%-too-narrow issue.  Y: PLY_ymin(1.5373)*9=13.84; pos_y = crown(1.26)−13.84=−12.58
 // Z: PLY z-center is −0.016; at scale 9 that's −0.14, so +0.14 re-centers it.
 const HAIR_PLY_SCALE   = 13.109;
-const HAIR_PLY_POS: [number, number, number] = [0, -23.300, 0.714];
+const HAIR_PLY_POS: [number, number, number] = [0, -23.349, 0.714];
 
 interface SceneProps {
   colorRGB: string;
