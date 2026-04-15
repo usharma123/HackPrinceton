@@ -232,7 +232,7 @@ function Scene({ colorRGB, profile, showFace = true, showStrands = true, showDep
       <OrbitControls
         enablePan={false}
         minPolarAngle={0}
-        maxPolarAngle={Math.PI / 2}
+        maxPolarAngle={Math.PI / 2 + (10 * Math.PI / 180)}
         minDistance={2.5}
         maxDistance={7.8}
       />
@@ -257,7 +257,7 @@ export default function HairScene({ params, colorRGB = '#3b1f0a', profile }: Hai
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <Canvas
         shadows
-        camera={{ position: [0, 1, 4], fov: 45 }}
+        camera={{ position: [0, 0, 7.8], fov: 45 }}
         style={{ width: '100%', height: '100%', background: '#000000' }}
       >
         <Scene colorRGB={colorRGB} profile={profile} showFace={showFace} showStrands={showStrands} showDepth={showDepth} />
