@@ -21,7 +21,9 @@ import { OrbitControls, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { HairParams, UserHeadProfile } from '@/types';
 import FaceHead from './FaceHead';
+import ARFaceHead from './ARFaceHead';
 import HairStrandMesh from './HairStrandMesh';
+import { useARFaceMesh } from '@/hooks/useARFaceMesh';
 import { parseNPY } from '@/lib/parseNPY';
 
 // ── Sub-components ──────────────────────────────────────────
@@ -29,6 +31,8 @@ import { parseNPY } from '@/lib/parseNPY';
 interface HeadMeshProps {
   profile?: UserHeadProfile;
   showFace?: boolean;
+  showHead?: boolean;
+  arMesh?: import('@/types').ARFaceMesh | null;
 }
 
 // Sphere fallback — shown while head.glb loads or if it fails.
@@ -61,7 +65,7 @@ function HeadMesh({ profile }: HeadMeshProps) {
 // We also derive rFace = box.max.z * canonicalScale, which is the exact Z depth
 // of the head's front face surface in canonical pre-scale space.  FaceHead uses
 // this so its hemisphere projection lands on the head surface — no guesswork.
-function CanonicalHeadGLB({ profile, showFace = true }: HeadMeshProps) {
+function CanonicalHeadGLB({ profile, showFace = true, showHead = true, arMesh }: HeadMeshProps) {
   const { scene } = useGLTF('/models/head.glb?v=6');
 
   const { glbScale, glbCenterY, faceSurfaceZ, chinTargetY, faceHeight } = useMemo(() => {
@@ -155,18 +159,21 @@ function CanonicalHeadGLB({ profile, showFace = true }: HeadMeshProps) {
   return (
     <group scale={[MODEL_SCALE, MODEL_SCALE, MODEL_SCALE]} position={[0, Y_OFFSET, Z_OFFSET]}>
       <group scale={[scaleX, scaleY, scaleX]}>
-        <group
-          position={[0, -(glbCenterY * glbScale) + FACE_Y_CORRECTION, 0]}
-          scale={[glbScale, glbScale, glbScale]}
-          rotation={[0.0245, 0, 0]}
-        >
-          <primitive object={scene} castShadow receiveShadow />
-        </group>
-        {profile?.faceScanData && showFace && (
-          // Z-offset places the face mesh flush on the head model's front surface.
-          // scaleX=1 always, so Z is unaffected by the outer group's scale.
+        {!arMesh && showHead && (
+          <group
+            position={[0, -(glbCenterY * glbScale) + FACE_Y_CORRECTION, 0]}
+            scale={[glbScale, glbScale, glbScale]}
+            rotation={[0.0245, 0, 0]}
+          >
+            <primitive object={scene} castShadow receiveShadow />
+          </group>
+        )}
+        {showFace && (
           <group position={[0, -faceHeight * 0.08, faceSurfaceZ + faceHeight * 0.05]} rotation={[0.06109, 0, 0]} scale={[0.88, 0.88, 0.88]}>
-            <FaceHead faceScanData={profile.faceScanData} outerScaleY={scaleY} chinTargetY={chinTargetY} />
+            {arMesh
+              ? <ARFaceHead arMesh={arMesh} />
+              : profile?.faceScanData && <FaceHead faceScanData={profile.faceScanData} outerScaleY={scaleY} chinTargetY={chinTargetY} />
+            }
           </group>
         )}
       </group>
@@ -174,10 +181,10 @@ function CanonicalHeadGLB({ profile, showFace = true }: HeadMeshProps) {
   );
 }
 
-function CanonicalHead({ profile, showFace }: HeadMeshProps) {
+function CanonicalHead({ profile, showFace, showHead, arMesh }: HeadMeshProps) {
   return (
-    <Suspense fallback={<HeadMesh profile={profile} showFace={showFace} />}>
-      <CanonicalHeadGLB profile={profile} showFace={showFace} />
+    <Suspense fallback={<HeadMesh profile={profile} showFace={showFace} arMesh={arMesh} />}>
+      <CanonicalHeadGLB profile={profile} showFace={showFace} showHead={showHead} arMesh={arMesh} />
     </Suspense>
   );
 }
@@ -277,10 +284,12 @@ const HAIR_LAYERS = [
 interface SceneProps {
   profile?: UserHeadProfile;
   showFace?: boolean;
+  showHead?: boolean;
   visibleLayers: Set<string>;
 }
 
-function Scene({ profile, showFace = true, visibleLayers }: SceneProps) {
+function Scene({ profile, showFace = true, showHead = true, visibleLayers }: SceneProps) {
+  const arMesh = useARFaceMesh();
   return (
     <>
       <ambientLight intensity={0.5} />
@@ -289,7 +298,7 @@ function Scene({ profile, showFace = true, visibleLayers }: SceneProps) {
 
       {/* FaceHead is rendered inside CanonicalHeadGLB / HeadMesh so it
           shares the same GLB bounding-box measurement for rFace. */}
-      <CanonicalHead profile={profile} showFace={showFace} />
+      <CanonicalHead profile={profile} showFace={showFace} showHead={showHead} arMesh={arMesh} />
 
       {HAIR_LAYERS.filter(l => visibleLayers.has(l.id)).map(l =>
         l.type === 'npy' ? (
@@ -334,6 +343,7 @@ interface HairSceneProps {
 
 export default function HairScene({ params: _params, colorRGB: _colorRGB, profile }: HairSceneProps) {
   const [showFace, setShowFace] = useState(true);
+  const [showHead, setShowHead] = useState(true);
   const [visibleLayers, setVisibleLayers] = useState<Set<string>>(
     new Set(['strands_1', 'depth_1'])
   );
@@ -358,9 +368,12 @@ export default function HairScene({ params: _params, colorRGB: _colorRGB, profil
         camera={{ position: [0, 0, 7.8], fov: 45 }}
         style={{ width: '100%', height: '100%', background: '#001f5b' }}
       >
-        <Scene profile={profile} showFace={showFace} visibleLayers={visibleLayers} />
+        <Scene profile={profile} showFace={showFace} showHead={showHead} visibleLayers={visibleLayers} />
       </Canvas>
       <div style={{ position: 'absolute', bottom: 12, left: 12, display: 'flex', gap: 6, flexWrap: 'wrap', maxWidth: '90%' }}>
+        <button onClick={() => setShowHead(v => !v)} style={{ ...btnStyle, opacity: showHead ? 1 : 0.4 }}>
+          head
+        </button>
         <button onClick={() => setShowFace(v => !v)} style={{ ...btnStyle, opacity: showFace ? 1 : 0.4 }}>
           face
         </button>

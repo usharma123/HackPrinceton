@@ -11,6 +11,13 @@ export interface HairParams {
   taper: number;        // 0.0 – 1.0  (gradient falloff from crown)
 }
 
+export interface ARFaceMesh {
+  // TrueDepth capture from iOS ARFaceGeometry (1220 vertices, real depth)
+  vertices:  number[][];   // (1220, 3) — ARKit camera space, metres
+  indices:   number[][];   // (N, 3)   — triangle faces
+  capturedAt: string;
+}
+
 export interface FaceScanData {
   // Raw MediaPipe landmarks at scan completion (468 points, normalized 0–1)
   landmarks: Array<{ x: number; y: number; z: number }>;
@@ -19,6 +26,8 @@ export interface FaceScanData {
   // Image dimensions the landmarks were captured at
   imageWidth: number;
   imageHeight: number;
+  // Optional high-fidelity TrueDepth mesh — preferred over landmarks when present
+  arMesh?: ARFaceMesh;
 }
 
 export interface UserHeadProfile {
