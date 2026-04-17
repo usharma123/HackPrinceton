@@ -3,13 +3,12 @@ import requests
 import time
 
 # HairStep server (hair strand reconstruction)
-HAIRSTEP_URL = "https://coconut-sublevel-pennant.ngrok-free.dev"
+HAIRSTEP_URL  = "https://coconut-sublevel-pennant.ngrok-free.dev"
 
-# MICA server (head mesh reconstruction — run mica_server.py on Oscar/AWS)
-# Replace with your ngrok URL after running: ngrok http 5001
-MICA_URL = "https://oblivion-wriggly-landfill.ngrok-free.dev"
+# FaceLift server (3D Gaussian head reconstruction)
+FACELIFT_URL  = "https://your-facelift-ngrok-url.ngrok-free.dev"
 
-ngrok_url = MICA_URL  # swap to HAIRSTEP_URL for hair jobs
+ngrok_url = HAIRSTEP_URL  # swap to FACELIFT_URL to test FaceLift jobs
 image_path = "/Users/ethanchen/ShapeUp-HackPrinceton/server/imgs/bruno1.png"
 
 headers = {

@@ -6,6 +6,8 @@ import { HairParams, UserHeadProfile } from '@/types';
 import { mockUserHeadProfile } from '@/data/mockProfile';
 import EditPanel from '@/components/EditPanel';
 import ScanSetup from '@/components/ScanSetup';
+import FaceLiftPanel from '@/components/FaceLiftPanel';
+import { useFaceLift } from '@/hooks/useFaceLift';
 
 // Dynamically import HairScene (Three.js — no SSR)
 const HairScene = dynamic(() => import('@/components/HairScene'), { ssr: false });
@@ -14,6 +16,10 @@ export default function Home() {
   const [showSetup, setShowSetup] = useState(true);
   const [profile, setProfile] = useState<UserHeadProfile>(mockUserHeadProfile);
   const [params, setParams] = useState<HairParams>(mockUserHeadProfile.currentStyle.params);
+
+  // Kick off FaceLift as soon as the scan captures a frontal snapshot.
+  // imageDataUrl is undefined until a real webcam scan completes (mock profile has none).
+  const facelift = useFaceLift(profile.faceScanData?.imageDataUrl);
 
   const handleSetupComplete = (newProfile: UserHeadProfile) => {
     setProfile(newProfile);
@@ -45,6 +51,11 @@ export default function Home() {
       <div className="w-72 border-l border-gray-800 flex-shrink-0">
         <EditPanel profile={profile} onParamsChange={handleParamsChange} />
       </div>
+
+      {/* FaceLift reconstruction panel — appears after setup, bottom-right corner */}
+      {!showSetup && (
+        <FaceLiftPanel status={facelift.status} jobId={facelift.jobId} />
+      )}
     </main>
   );
 }
