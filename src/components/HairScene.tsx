@@ -15,85 +15,20 @@
 
 'use client';
 
-import { useRef, useMemo, Suspense } from 'react';
-import { Canvas, useFrame } from '@react-three/fiber';
+import React, { useMemo, useEffect, useState, Suspense } from 'react';
+import { Canvas } from '@react-three/fiber';
 import { OrbitControls, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
 import { HairParams, UserHeadProfile } from '@/types';
 import FaceHead from './FaceHead';
-
-// ── Hair zone position computation ───────────────────────────
-
-interface ZoneLayout {
-  position: [number, number, number];
-  baseScale: [number, number, number];
-}
-
-interface HairZones {
-  top:   ZoneLayout;
-  left:  ZoneLayout;
-  right: ZoneLayout;
-  back:  ZoneLayout;
-}
-
-// Hardcoded fallback (matches original exactly)
-const FALLBACK_ZONES: HairZones = {
-  top:   { position: [0, 1.3, 0],      baseScale: [0.85, 0.5, 0.85] },
-  left:  { position: [-1.05, 0.1, 0],  baseScale: [0.25, 0.8, 0.7]  },
-  right: { position: [1.05, 0.1, 0],   baseScale: [0.25, 0.8, 0.7]  },
-  back:  { position: [0, 0.0, -1.05],  baseScale: [0.75, 0.7, 0.25] },
-};
-
-function computeZones(profile: UserHeadProfile): HairZones {
-  const { headProportions: hp, anchors } = profile;
-
-  // Width ratio relative to canonical 1.6 — scales horizontal footprint
-  const widthRatio = hp.width / 1.6;
-
-  // ── Hair_Top ───────────────────────────────────────────────
-  // Center sits one base-block-half above the crown
-  const topBaseH: number = 0.5;
-  const topY = hp.crownY + topBaseH * 0.5;
-
-  // ── Hair_Sides ─────────────────────────────────────────────
-  // X: ear anchor ± 0.2 outset so the block clears the head surface
-  // Y: slightly above ear level
-  const sideBaseH: number = 0.8;
-  const sideOutset = 0.2;
-  const leftX  = anchors.earLeft[0]  - sideOutset;
-  const rightX = anchors.earRight[0] + sideOutset;
-  const sideY  = anchors.earLeft[1] + sideBaseH * 0.25; // ~0.2 above ear
-
-  // ── Hair_Back ──────────────────────────────────────────────
-  // Approximate head radius from height (canonical 2.2 → radius 1.0)
-  const headRadius  = hp.height / 2.2;
-  const backBlockD  = 0.25;
-  const backZ       = -(headRadius + backBlockD * 0.5);
-
-  return {
-    top: {
-      position:  [0, topY, 0],
-      baseScale: [0.85 * widthRatio, topBaseH, 0.85 * widthRatio],
-    },
-    left: {
-      position:  [leftX,  sideY, 0],
-      baseScale: [0.25, sideBaseH, 0.7 * widthRatio],
-    },
-    right: {
-      position:  [rightX, sideY, 0],
-      baseScale: [0.25, sideBaseH, 0.7 * widthRatio],
-    },
-    back: {
-      position:  [0, 0, backZ],
-      baseScale: [0.75 * widthRatio, 0.7, backBlockD],
-    },
-  };
-}
+import HairStrandMesh from './HairStrandMesh';
+import { parseNPY } from '@/lib/parseNPY';
 
 // ── Sub-components ──────────────────────────────────────────
 
 interface HeadMeshProps {
   profile?: UserHeadProfile;
+  showFace?: boolean;
 }
 
 // Sphere fallback — shown while head.glb loads or if it fails.
@@ -107,7 +42,7 @@ function HeadMesh({ profile }: HeadMeshProps) {
     <group scale={[scaleX, scaleY, scaleX]}>
       <mesh castShadow receiveShadow>
         <sphereGeometry args={[1, 64, 64]} />
-        <meshStandardMaterial color="#f5c9a0" roughness={0.8} metalness={0.0} />
+        <meshStandardMaterial color="#e8be9a" roughness={0.8} metalness={0.0} />
       </mesh>
       {profile?.faceScanData && (
         <group position={[0, 0, 1.0]}>
@@ -126,10 +61,10 @@ function HeadMesh({ profile }: HeadMeshProps) {
 // We also derive rFace = box.max.z * canonicalScale, which is the exact Z depth
 // of the head's front face surface in canonical pre-scale space.  FaceHead uses
 // this so its hemisphere projection lands on the head surface — no guesswork.
-function CanonicalHeadGLB({ profile }: HeadMeshProps) {
-  const { scene } = useGLTF('/models/head.glb');
+function CanonicalHeadGLB({ profile, showFace = true }: HeadMeshProps) {
+  const { scene } = useGLTF('/models/head.glb?v=6');
 
-  const { glbScale, glbCenterY, faceSurfaceZ } = useMemo(() => {
+  const { glbScale, glbCenterY, faceSurfaceZ, chinTargetY, faceHeight } = useMemo(() => {
     scene.updateWorldMatrix(true, true);
     const box    = new THREE.Box3().setFromObject(scene);
     const size   = box.getSize(new THREE.Vector3());
@@ -145,7 +80,42 @@ function CanonicalHeadGLB({ profile }: HeadMeshProps) {
     // faceSurfaceZ: front face plane in outer-group units (updated for gs).
     const fsz = box.max.z * gs;
 
-    return { glbScale: gs, glbCenterY: center.y, faceSurfaceZ: fsz };
+    // ── GLB chin detection ───────────────────────────────────────────────────
+    // The canonical head is the most-protruding oval (z near box.max.z).
+    // Scan all mesh vertices whose world-space Z > 75% of box.max.z to find
+    // the bottommost point on that oval — the chin.
+    const FACE_Y_CORRECTION = -0.5; // must match the constant used in the JSX below
+    const frontThreshold = box.max.z * 0.75;
+    let glbChinY_native    = Infinity;
+    let glbFaceTopY_native = -Infinity;
+    const tmp = new THREE.Vector3();
+    scene.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      const pos = child.geometry.attributes.position;
+      if (!pos) return;
+      for (let i = 0; i < pos.count; i++) {
+        tmp.fromBufferAttribute(pos, i).applyMatrix4(child.matrixWorld);
+        if (tmp.z > frontThreshold) {
+          if (tmp.y < glbChinY_native)    glbChinY_native    = tmp.y;
+          if (tmp.y > glbFaceTopY_native) glbFaceTopY_native = tmp.y;
+        }
+      }
+    });
+    // Raise the raw chin point by 1/20th of the front-face oval height so the
+    // target lands slightly above the very bottom edge of the mesh geometry.
+    const glbFaceHeight_native = glbFaceTopY_native - glbChinY_native;
+    const adjustedChinY = glbChinY_native + glbFaceHeight_native / 20;
+
+    // Convert GLB-native Y → outer-group local space:
+    //   inner group: position = -(center.y * gs) + FACE_Y_CORRECTION, scale = gs
+    //   vertex y in outer group = (vertex_y_native - center.y) * gs + FACE_Y_CORRECTION
+    const cty = glbChinY_native < Infinity
+      ? (adjustedChinY - center.y) * gs + FACE_Y_CORRECTION
+      : undefined;
+
+    const faceHeight = glbFaceHeight_native * gs;
+
+    return { glbScale: gs, glbCenterY: center.y, faceSurfaceZ: fsz, chinTargetY: cty, faceHeight };
   }, [scene]);
 
   const scaleX = profile ? (profile.headProportions.width  / 1.6) : 1;
@@ -160,29 +130,43 @@ function CanonicalHeadGLB({ profile }: HeadMeshProps) {
   // FaceHead lives INSIDE the outer group so it scales with the head model.
   // outerScaleY only cancels the non-uniform scaleY; the uniform MODEL_SCALE
   // does not distort face proportions, so it does not need to be passed through.
-  const MODEL_SCALE = 1.5;
+  // Recolor the GLB's baked materials to match the FaceHead skin tone.
+  useEffect(() => {
+    const color = new THREE.Color('#e8be9a');
+    scene.traverse((child) => {
+      if (!(child instanceof THREE.Mesh)) return;
+      const mats = Array.isArray(child.material) ? child.material : [child.material];
+      mats.forEach((m) => {
+        if (m instanceof THREE.MeshStandardMaterial) m.color.copy(color);
+      });
+    });
+  }, [scene]);
+
+  const MODEL_SCALE = 0.8111;
   // Face center sits above y=0 in outer-group space (face is in the upper
   // portion of the head+neck+shoulders model).  After glbScale amplification
   // this offset grows; FACE_Y_CORRECTION cancels it so the GLB face aligns
   // with the MediaPipe mesh center at y=0.  Tune if still misaligned.
   const FACE_Y_CORRECTION = -0.5; // outer-group units
   // Shift the whole assembly (GLB + FaceHead) down for scene framing.
-  const Y_OFFSET = -0.5;
+  const Y_OFFSET = -0.5 + faceHeight * MODEL_SCALE * 0.16;
+  const Z_OFFSET = faceHeight * MODEL_SCALE * 0.07;
 
   return (
-    <group scale={[MODEL_SCALE, MODEL_SCALE, MODEL_SCALE]} position={[0, Y_OFFSET, 0]}>
+    <group scale={[MODEL_SCALE, MODEL_SCALE, MODEL_SCALE]} position={[0, Y_OFFSET, Z_OFFSET]}>
       <group scale={[scaleX, scaleY, scaleX]}>
         <group
           position={[0, -(glbCenterY * glbScale) + FACE_Y_CORRECTION, 0]}
           scale={[glbScale, glbScale, glbScale]}
+          rotation={[0.0245, 0, 0]}
         >
           <primitive object={scene} castShadow receiveShadow />
         </group>
-        {profile?.faceScanData && (
+        {profile?.faceScanData && showFace && (
           // Z-offset places the face mesh flush on the head model's front surface.
           // scaleX=1 always, so Z is unaffected by the outer group's scale.
-          <group position={[0, 0, faceSurfaceZ]}>
-            <FaceHead faceScanData={profile.faceScanData} outerScaleY={scaleY} />
+          <group position={[0, -faceHeight * 0.08, faceSurfaceZ + faceHeight * 0.05]} rotation={[0.06109, 0, 0]} scale={[0.88, 0.88, 0.88]}>
+            <FaceHead faceScanData={profile.faceScanData} outerScaleY={scaleY} chinTargetY={chinTargetY} />
           </group>
         )}
       </group>
@@ -190,51 +174,113 @@ function CanonicalHeadGLB({ profile }: HeadMeshProps) {
   );
 }
 
-function CanonicalHead({ profile }: HeadMeshProps) {
+function CanonicalHead({ profile, showFace }: HeadMeshProps) {
   return (
-    <Suspense fallback={<HeadMesh profile={profile} />}>
-      <CanonicalHeadGLB profile={profile} />
+    <Suspense fallback={<HeadMesh profile={profile} showFace={showFace} />}>
+      <CanonicalHeadGLB profile={profile} showFace={showFace} />
     </Suspense>
   );
 }
 
-interface HairZoneProps {
-  position:   [number, number, number];
-  baseScale:  [number, number, number];
-  lengthScale: number;
-  messiness:  number;
-  colorRGB:   string;
-}
+// ── Hair depth points (npy) ─────────────────────────────────
 
-function HairZone({ position, baseScale, lengthScale, messiness, colorRGB }: HairZoneProps) {
-  const meshRef = useRef<THREE.Mesh>(null!);
+// Renders a .npy file as a visible point cloud.
+// Handles two shapes:
+//   (N, 3)  — direct XYZ points (used as-is, scaled by scale/position group)
+//   (H, W)  — 2D depth map: constructs 3D points by mapping pixel (i,j) →
+//              (x, y) in PLY bbox space and depth value → z offset.
+//              Subsampled every DEPTH_STEP pixels to keep point count manageable.
+const DEPTH_STEP = 6; // sample every Nth pixel from the depth map
+// PLY bbox extents used to normalize depth map pixel coords into PLY space.
+const PLY_W = 0.34; const PLY_H = 0.37; const PLY_D = 0.30;
+const PLY_Y_CENTER = 1.72; const PLY_Z_CENTER = -0.016;
 
-  useFrame(({ clock }) => {
-    if (!meshRef.current) return;
-    const t   = clock.getElapsedTime();
-    const amp = messiness * 0.015;
-    meshRef.current.rotation.x = Math.sin(t * 2.1) * amp;
-    meshRef.current.rotation.z = Math.cos(t * 1.7) * amp;
-  });
+function HairDepthPoints({ url, color, scale, position }: {
+  url: string;
+  color: string;
+  scale: number;
+  position: [number, number, number];
+}) {
+  const [geo, setGeo] = useState<THREE.BufferGeometry | null>(null);
 
+  useEffect(() => {
+    let cancelled = false;
+    parseNPY(url).then(({ data, shape }) => {
+      if (cancelled) return;
+      const g = new THREE.BufferGeometry();
+
+      let positions: Float32Array;
+
+      if (shape.length === 2) {
+        // 2D depth map (H, W): build point cloud in PLY coordinate space
+        const [H, W] = shape;
+        const pts: number[] = [];
+        for (let i = 0; i < H; i += DEPTH_STEP) {
+          for (let j = 0; j < W; j += DEPTH_STEP) {
+            const d = data[i * W + j];
+            if (d <= 0) continue; // skip background/empty pixels
+            const x = ((j - W / 2) / W) * PLY_W;
+            const y = PLY_Y_CENTER - ((i - H / 2) / H) * PLY_H;
+            const z = PLY_Z_CENTER + (d - 0.5) * PLY_D;
+            pts.push(x, y, z);
+          }
+        }
+        positions = new Float32Array(pts);
+      } else {
+        // (N, 3): direct XYZ points
+        positions = new Float32Array(data);
+      }
+
+      g.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      setGeo(g);
+    });
+    return () => { cancelled = true; };
+  }, [url]);
+
+  useEffect(() => () => { geo?.dispose(); }, [geo]);
+
+  if (!geo) return null;
   return (
-    <mesh ref={meshRef} position={position} castShadow renderOrder={2}>
-      <boxGeometry args={[baseScale[0], baseScale[1] * lengthScale, baseScale[2]]} />
-      <meshStandardMaterial color={colorRGB} roughness={0.9} metalness={0.0} />
-    </mesh>
+    <group scale={scale} position={position}>
+      <points geometry={geo}>
+        <pointsMaterial color={color} size={0.02} sizeAttenuation depthWrite={false} />
+      </points>
+    </group>
   );
 }
 
 // ── Scene content ───────────────────────────────────────────
 
+// PLY hair bbox (scene units): width≈0.34, height≈0.37, depth≈0.30, center y≈1.72
+// Head is 1.6 canonical × MODEL_SCALE 1.5 ≈ 2.4 units wide, crown at world y≈1.26.
+// Scale 9 brings hair width to ~3.1 units (matching head), matching the observed
+// 50%-too-narrow issue.  Y: PLY_ymin(1.5373)*9=13.84; pos_y = crown(1.26)−13.84=−12.58
+// Z: PLY z-center is −0.016; at scale 9 that's −0.14, so +0.14 re-centers it.
+const HAIR_PLY_SCALE   = 13.109;
+const HAIR_PLY_POS: [number, number, number] = [0, -23.349, 0.714];
+
+// Dev: all known hair layers. Toggle multiple simultaneously to identify pairs.
+// Colors are fixed per layer so you can distinguish overlapping sets visually.
+// type 'ply' → HairStrandMesh, type 'npy' → HairDepthPoints
+const HAIR_LAYERS = [
+  { type: 'ply', id: 'strands_1',    label: 'Strands 1',   url: '/hair/strands_1.ply',   color: '#3b1f0a', lineWidth: 0.8, renderOrder: 0 },
+  { type: 'ply', id: 'depth_1',      label: 'Depth 1',     url: '/hair/depth_1.ply',     color: '#3b1f0a', lineWidth: 1.0, renderOrder: 1 },
+  { type: 'ply', id: 'preset_a',     label: 'Preset A',    url: '/hair/preset_a.ply',    color: '#c8a050', lineWidth: 0.8, renderOrder: 0 },
+  { type: 'ply', id: 'preset_b',     label: 'Preset B',    url: '/hair/preset_b.ply',    color: '#222222', lineWidth: 0.8, renderOrder: 0 },
+  { type: 'ply', id: 'preset_c',     label: 'Preset C',    url: '/hair/preset_c.ply',    color: '#8b1a0a', lineWidth: 0.8, renderOrder: 0 },
+  { type: 'ply', id: 'guest',        label: 'Guest',       url: '/hair/guest.ply',       color: '#c0b090', lineWidth: 0.8, renderOrder: 0 },
+  { type: 'ply', id: 'brunohair',    label: 'Bruno',       url: '/hair/brunohair.ply',   color: '#0f0d0c', lineWidth: 0.8, renderOrder: 0 },
+  { type: 'npy', id: 'bruno_depth',  label: 'Bruno Depth', url: '/hair/brunohair_depth.npy', color: '#44aaff', lineWidth: 0, renderOrder: 0 },
+] as const;
+
+
 interface SceneProps {
-  params:   HairParams;
-  colorRGB: string;
-  zones:    HairZones;
   profile?: UserHeadProfile;
+  showFace?: boolean;
+  visibleLayers: Set<string>;
 }
 
-function Scene({ params, colorRGB, zones, profile }: SceneProps) {
+function Scene({ profile, showFace = true, visibleLayers }: SceneProps) {
   return (
     <>
       <ambientLight intensity={0.5} />
@@ -243,43 +289,36 @@ function Scene({ params, colorRGB, zones, profile }: SceneProps) {
 
       {/* FaceHead is rendered inside CanonicalHeadGLB / HeadMesh so it
           shares the same GLB bounding-box measurement for rFace. */}
-      <CanonicalHead profile={profile} />
+      <CanonicalHead profile={profile} showFace={showFace} />
 
-      <HairZone
-        position={zones.top.position}
-        baseScale={zones.top.baseScale}
-        lengthScale={params.topLength}
-        messiness={params.messiness}
-        colorRGB={colorRGB}
-      />
-      <HairZone
-        position={zones.left.position}
-        baseScale={zones.left.baseScale}
-        lengthScale={params.sideLength}
-        messiness={params.messiness}
-        colorRGB={colorRGB}
-      />
-      <HairZone
-        position={zones.right.position}
-        baseScale={zones.right.baseScale}
-        lengthScale={params.sideLength}
-        messiness={params.messiness}
-        colorRGB={colorRGB}
-      />
-      <HairZone
-        position={zones.back.position}
-        baseScale={zones.back.baseScale}
-        lengthScale={params.backLength}
-        messiness={params.messiness}
-        colorRGB={colorRGB}
-      />
+      {HAIR_LAYERS.filter(l => visibleLayers.has(l.id)).map(l =>
+        l.type === 'npy' ? (
+          <HairDepthPoints
+            key={l.id}
+            url={l.url}
+            color={l.color}
+            scale={HAIR_PLY_SCALE}
+            position={HAIR_PLY_POS}
+          />
+        ) : (
+          <HairStrandMesh
+            key={l.id}
+            url={l.url}
+            color={l.color}
+            scale={HAIR_PLY_SCALE}
+            position={HAIR_PLY_POS}
+            lineWidth={l.lineWidth}
+            renderOrder={l.renderOrder}
+          />
+        )
+      )}
 
       <OrbitControls
         enablePan={false}
         minPolarAngle={0}
-        maxPolarAngle={Math.PI / 2}
+        maxPolarAngle={Math.PI / 2 + (10 * Math.PI / 180)}
         minDistance={2.5}
-        maxDistance={6}
+        maxDistance={7.8}
       />
     </>
   );
@@ -293,20 +332,49 @@ interface HairSceneProps {
   profile?:  UserHeadProfile;
 }
 
-export default function HairScene({ params, colorRGB = '#3b1f0a', profile }: HairSceneProps) {
-  const zones = useMemo(
-    () => (profile ? computeZones(profile) : FALLBACK_ZONES),
-    [profile]
+export default function HairScene({ params: _params, colorRGB: _colorRGB, profile }: HairSceneProps) {
+  const [showFace, setShowFace] = useState(true);
+  const [visibleLayers, setVisibleLayers] = useState<Set<string>>(
+    new Set(['strands_1', 'depth_1'])
   );
 
+  const toggleLayer = (id: string) =>
+    setVisibleLayers(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  const btnStyle: React.CSSProperties = {
+    padding: '4px 10px', fontSize: 12,
+    background: '#000', color: '#fff', border: 'none',
+    borderRadius: 4, cursor: 'pointer',
+  };
+
   return (
-    <Canvas
-      shadows
-      camera={{ position: [0, 1, 4], fov: 45 }}
-      style={{ width: '100%', height: '100%' }}
-    >
-      <Scene params={params} colorRGB={colorRGB} zones={zones} profile={profile} />
-    </Canvas>
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <Canvas
+        shadows
+        camera={{ position: [0, 0, 7.8], fov: 45 }}
+        style={{ width: '100%', height: '100%', background: '#001f5b' }}
+      >
+        <Scene profile={profile} showFace={showFace} visibleLayers={visibleLayers} />
+      </Canvas>
+      <div style={{ position: 'absolute', bottom: 12, left: 12, display: 'flex', gap: 6, flexWrap: 'wrap', maxWidth: '90%' }}>
+        <button onClick={() => setShowFace(v => !v)} style={{ ...btnStyle, opacity: showFace ? 1 : 0.4 }}>
+          face
+        </button>
+        {HAIR_LAYERS.map(l => (
+          <button key={l.id} onClick={() => toggleLayer(l.id)} style={{
+            ...btnStyle,
+            outline: visibleLayers.has(l.id) ? `2px solid ${l.color}` : 'none',
+            opacity: visibleLayers.has(l.id) ? 1 : 0.4,
+          }}>
+            {l.label}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
