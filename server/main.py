@@ -1,8 +1,16 @@
+import os
 import requests
 import time
 
-ngrok_url = "https://coconut-sublevel-pennant.ngrok-free.dev"
-image_path = r"C:\Users\stringbot\Documents\Github\ShapeUp-HackPrinceton\server\imgs\ethan1.png"
+# HairStep server (hair strand reconstruction)
+HAIRSTEP_URL = "https://coconut-sublevel-pennant.ngrok-free.dev"
+
+# MICA server (head mesh reconstruction — run mica_server.py on Oscar/AWS)
+# Replace with your ngrok URL after running: ngrok http 5001
+MICA_URL = "https://oblivion-wriggly-landfill.ngrok-free.dev"
+
+ngrok_url = MICA_URL  # swap to HAIRSTEP_URL for hair jobs
+image_path = "/Users/ethanchen/ShapeUp-HackPrinceton/server/imgs/bruno1.png"
 
 headers = {
     "ngrok-skip-browser-warning": "true",
@@ -11,11 +19,15 @@ headers = {
 
 # Submit the job
 with open(image_path, 'rb') as f:
-    files = {'image': (image_path, f, 'image/png')}
+    files = {'image': (os.path.basename(image_path), f, 'image/png')}
     response = requests.post(f"{ngrok_url}/process_image", files=files, headers=headers)
 
-print("Submitted:", response.json())
-job_id = response.json()['job_id']
+result = response.json()
+print("Submitted:", result)
+if 'job_id' not in result:
+    print("Error from server:", result)
+    exit(1)
+job_id = result['job_id']
 
 # Poll until done
 while True:
@@ -23,7 +35,7 @@ while True:
     print("Status:", status['status'])
     if status['status'] == 'success':
         download = requests.get(f"{ngrok_url}/download/{job_id}", headers=headers)
-        with open("../public/output.ply", "wb") as f:
+        with open(os.path.join(os.path.dirname(__file__), "../public/output.ply"), "wb") as f:
             f.write(download.content)
         print("Downloaded output.ply")
         break
