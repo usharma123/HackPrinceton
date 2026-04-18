@@ -16,12 +16,17 @@ import { useLLM } from '@/hooks/useLLM';
 interface EditPanelProps {
   profile: UserHeadProfile;
   onParamsChange: (params: HairParams) => void;
+  /** Called with the edited photo data URL so the parent can pass it to HairStep */
+  onEditedPhoto?: (dataUrl: string) => void;
 }
 
-export default function EditPanel({ profile, onParamsChange }: EditPanelProps) {
+export default function EditPanel({ profile, onParamsChange, onEditedPhoto }: EditPanelProps) {
   const [prompt, setPrompt] = useState('');
   const [history, setHistory] = useState<HairParams[]>([profile.currentStyle.params]);
   const [historyIndex, setHistoryIndex] = useState(0);
+  const [editedPhotoUrl, setEditedPhotoUrl] = useState<string | null>(null);
+  const [photoLoading, setPhotoLoading] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
 
   const { editHair, loading, error } = useLLM(profile);
   const [summary, setSummary] = useState<string | null>(null);
@@ -48,7 +53,36 @@ export default function EditPanel({ profile, onParamsChange }: EditPanelProps) {
   const handlePromptSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!prompt.trim()) return;
-    const result = await editHair(prompt);
+
+    // Run LLM param edit and Gemini photo edit in parallel
+    const [result] = await Promise.all([
+      editHair(prompt),
+      (async () => {
+        const scanImage = profile.faceScanData?.imageDataUrl;
+        if (!scanImage) return;
+        setPhotoLoading(true);
+        setPhotoError(null);
+        try {
+          const res = await fetch('/api/photo-edit', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt, imageDataUrl: scanImage }),
+          });
+          const data = await res.json();
+          if (data.editedImageDataUrl) {
+            setEditedPhotoUrl(data.editedImageDataUrl);
+            onEditedPhoto?.(data.editedImageDataUrl);
+          } else {
+            setPhotoError(data.error ?? 'Photo edit failed');
+          }
+        } catch {
+          setPhotoError('Photo edit request failed');
+        } finally {
+          setPhotoLoading(false);
+        }
+      })(),
+    ]);
+
     if (result) {
       pushParams(result.params);
       setPrompt('');
@@ -115,6 +149,43 @@ export default function EditPanel({ profile, onParamsChange }: EditPanelProps) {
         </button>
         {error && <p className="text-red-400 text-xs">{error}</p>}
       </form>
+
+      {/* Photo Edit Preview */}
+      {(photoLoading || editedPhotoUrl || photoError) && (
+        <div className="flex flex-col gap-2">
+          <p className="text-xs text-gray-500 uppercase tracking-widest">Photo Preview</p>
+          {photoLoading && (
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              <span className="animate-spin">⟳</span> Editing photo…
+            </div>
+          )}
+          {photoError && <p className="text-red-400 text-xs">{photoError}</p>}
+          {editedPhotoUrl && !photoLoading && (
+            <div className="flex gap-2">
+              {profile.faceScanData?.imageDataUrl && (
+                <div className="flex flex-col items-center gap-1 flex-1">
+                  <span className="text-xs text-gray-500">Before</span>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={profile.faceScanData.imageDataUrl}
+                    alt="Original scan"
+                    className="rounded w-full object-cover aspect-square"
+                  />
+                </div>
+              )}
+              <div className="flex flex-col items-center gap-1 flex-1">
+                <span className="text-xs text-gray-500">After</span>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={editedPhotoUrl}
+                  alt="Gemini edited hair"
+                  className="rounded w-full object-cover aspect-square"
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Undo / Redo */}
       <div className="flex gap-2">
