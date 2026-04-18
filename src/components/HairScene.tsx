@@ -15,16 +15,18 @@
 
 'use client';
 
-import React, { useMemo, useEffect, useState, Suspense } from 'react';
-import { Canvas } from '@react-three/fiber';
-import { OrbitControls, useGLTF } from '@react-three/drei';
 import * as THREE from 'three';
+
 import { HairParams, UserHeadProfile } from '@/types';
-import FaceHead from './FaceHead';
+import { OrbitControls, useGLTF } from '@react-three/drei';
+import React, { Suspense, useEffect, useMemo, useState } from 'react';
+
 import ARFaceHead from './ARFaceHead';
+import { Canvas } from '@react-three/fiber';
+import FaceHead from './FaceHead';
 import HairStrandMesh from './HairStrandMesh';
-import { useARFaceMesh } from '@/hooks/useARFaceMesh';
 import { parseNPY } from '@/lib/parseNPY';
+import { useARFaceMesh } from '@/hooks/useARFaceMesh';
 
 // ── Sub-components ──────────────────────────────────────────
 
@@ -189,6 +191,42 @@ function CanonicalHead({ profile, showFace, showHead, arMesh }: HeadMeshProps) {
   );
 }
 
+// ── Polycam head ─────────────────────────────────────────────
+function PolycamHeadGLB() {
+  const { scene } = useGLTF('/models/bruno_polycam.glb');
+
+  const { scale, centerOffset, heightInScene } = useMemo(() => {
+    scene.updateWorldMatrix(true, true);
+    const box    = new THREE.Box3().setFromObject(scene);
+    const size   = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const s = (1.6 / Math.max(size.x, 0.001)) * 5 * 0.7 * 1.2;
+    return { scale: s, centerOffset: center, heightInScene: size.y * s };
+  }, [scene]);
+
+  return (
+    <group
+      scale={scale}
+      rotation={[3 * Math.PI / 180, 35 * Math.PI / 180, -6 * Math.PI / 180]}
+      position={[
+        -centerOffset.x * scale - heightInScene * 0.045,
+        -centerOffset.y * scale - heightInScene * 0.3,
+        -centerOffset.z * scale + heightInScene * 0.10,
+      ]}
+    >
+      <primitive object={scene} castShadow receiveShadow />
+    </group>
+  );
+}
+
+function PolycamHead() {
+  return (
+    <Suspense fallback={null}>
+      <PolycamHeadGLB />
+    </Suspense>
+  );
+}
+
 // ── Hair depth points (npy) ─────────────────────────────────
 
 // Renders a .npy file as a visible point cloud.
@@ -285,10 +323,11 @@ interface SceneProps {
   profile?: UserHeadProfile;
   showFace?: boolean;
   showHead?: boolean;
+  showPolycam?: boolean;
   visibleLayers: Set<string>;
 }
 
-function Scene({ profile, showFace = true, showHead = true, visibleLayers }: SceneProps) {
+function Scene({ profile, showFace = true, showHead = true, showPolycam = false, visibleLayers }: SceneProps) {
   const arMesh = useARFaceMesh();
   return (
     <>
@@ -299,6 +338,7 @@ function Scene({ profile, showFace = true, showHead = true, visibleLayers }: Sce
       {/* FaceHead is rendered inside CanonicalHeadGLB / HeadMesh so it
           shares the same GLB bounding-box measurement for rFace. */}
       <CanonicalHead profile={profile} showFace={showFace} showHead={showHead} arMesh={arMesh} />
+      {showPolycam && <PolycamHead />}
 
       {HAIR_LAYERS.filter(l => visibleLayers.has(l.id)).map(l =>
         l.type === 'npy' ? (
@@ -344,6 +384,7 @@ interface HairSceneProps {
 export default function HairScene({ params: _params, colorRGB: _colorRGB, profile }: HairSceneProps) {
   const [showFace, setShowFace] = useState(true);
   const [showHead, setShowHead] = useState(true);
+  const [showPolycam, setShowPolycam] = useState(false);
   const [visibleLayers, setVisibleLayers] = useState<Set<string>>(
     new Set(['strands_1', 'depth_1'])
   );
@@ -368,11 +409,14 @@ export default function HairScene({ params: _params, colorRGB: _colorRGB, profil
         camera={{ position: [0, 0, 7.8], fov: 45 }}
         style={{ width: '100%', height: '100%', background: '#001f5b' }}
       >
-        <Scene profile={profile} showFace={showFace} showHead={showHead} visibleLayers={visibleLayers} />
+        <Scene profile={profile} showFace={showFace} showHead={showHead} showPolycam={showPolycam} visibleLayers={visibleLayers} />
       </Canvas>
       <div style={{ position: 'absolute', bottom: 12, left: 12, display: 'flex', gap: 6, flexWrap: 'wrap', maxWidth: '90%' }}>
         <button onClick={() => setShowHead(v => !v)} style={{ ...btnStyle, opacity: showHead ? 1 : 0.4 }}>
           head
+        </button>
+        <button onClick={() => setShowPolycam(v => !v)} style={{ ...btnStyle, opacity: showPolycam ? 1 : 0.4 }}>
+          polycam
         </button>
         <button onClick={() => setShowFace(v => !v)} style={{ ...btnStyle, opacity: showFace ? 1 : 0.4 }}>
           face
