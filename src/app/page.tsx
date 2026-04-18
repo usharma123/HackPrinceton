@@ -1,19 +1,20 @@
 'use client';
 
-import { useState } from 'react';
-import dynamic from 'next/dynamic';
 import { HairParams, UserHeadProfile } from '@/types';
-import { mockUserHeadProfile } from '@/data/mockProfile';
+
 import EditPanel from '@/components/EditPanel';
-import ScanSetup from '@/components/ScanSetup';
 import FaceLiftPanel from '@/components/FaceLiftPanel';
+import ScanSetup from '@/components/ScanSetup';
+import dynamic from 'next/dynamic';
+import { mockUserHeadProfile } from '@/data/mockProfile';
 import { useFaceLift } from '@/hooks/useFaceLift';
+import { useState } from 'react';
 
 // Dynamically import HairScene (Three.js — no SSR)
 const HairScene = dynamic(() => import('@/components/HairScene'), { ssr: false });
 
 export default function Home() {
-  const [showSetup, setShowSetup] = useState(true);
+  const [showSetup, setShowSetup] = useState(false);
   const [profile, setProfile] = useState<UserHeadProfile>(mockUserHeadProfile);
   const [params, setParams] = useState<HairParams>(mockUserHeadProfile.currentStyle.params);
 

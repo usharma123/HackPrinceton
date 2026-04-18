@@ -18,7 +18,7 @@
 import * as THREE from 'three';
 
 import { HairParams, UserHeadProfile } from '@/types';
-import { OrbitControls, useGLTF } from '@react-three/drei';
+import { OrbitControls, Splat, useGLTF } from '@react-three/drei';
 import React, { Suspense, useEffect, useMemo, useState } from 'react';
 
 import ARFaceHead from './ARFaceHead';
@@ -339,6 +339,8 @@ function Scene({ profile, showFace = true, showHead = true, showPolycam = false,
           shares the same GLB bounding-box measurement for rFace. */}
       <CanonicalHead profile={profile} showFace={showFace} showHead={showHead} arMesh={arMesh} />
       {showPolycam && <PolycamHead />}
+
+      <Splat src="/models/gaussians.ply" />
 
       {HAIR_LAYERS.filter(l => visibleLayers.has(l.id)).map(l =>
         l.type === 'npy' ? (
