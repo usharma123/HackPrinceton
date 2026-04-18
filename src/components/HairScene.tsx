@@ -324,10 +324,11 @@ interface SceneProps {
   showFace?: boolean;
   showHead?: boolean;
   showPolycam?: boolean;
+  showSplat?: boolean;
   visibleLayers: Set<string>;
 }
 
-function Scene({ profile, showFace = true, showHead = true, showPolycam = false, visibleLayers }: SceneProps) {
+function Scene({ profile, showFace = true, showHead = true, showPolycam = false, showSplat = true, visibleLayers }: SceneProps) {
   const arMesh = useARFaceMesh();
   return (
     <>
@@ -340,7 +341,11 @@ function Scene({ profile, showFace = true, showHead = true, showPolycam = false,
       <CanonicalHead profile={profile} showFace={showFace} showHead={showHead} arMesh={arMesh} />
       {showPolycam && <PolycamHead />}
 
-      <Splat src="/models/gaussians.ply" />
+      {showSplat && (
+        <Suspense fallback={null}>
+          <Splat src="/models/gaussians.ply" />
+        </Suspense>
+      )}
 
       {HAIR_LAYERS.filter(l => visibleLayers.has(l.id)).map(l =>
         l.type === 'npy' ? (
@@ -387,6 +392,7 @@ export default function HairScene({ params: _params, colorRGB: _colorRGB, profil
   const [showFace, setShowFace] = useState(true);
   const [showHead, setShowHead] = useState(true);
   const [showPolycam, setShowPolycam] = useState(false);
+  const [showSplat, setShowSplat] = useState(true);
   const [visibleLayers, setVisibleLayers] = useState<Set<string>>(
     new Set(['strands_1', 'depth_1'])
   );
@@ -411,7 +417,7 @@ export default function HairScene({ params: _params, colorRGB: _colorRGB, profil
         camera={{ position: [0, 0, 7.8], fov: 45 }}
         style={{ width: '100%', height: '100%', background: '#001f5b' }}
       >
-        <Scene profile={profile} showFace={showFace} showHead={showHead} showPolycam={showPolycam} visibleLayers={visibleLayers} />
+        <Scene profile={profile} showFace={showFace} showHead={showHead} showPolycam={showPolycam} showSplat={showSplat} visibleLayers={visibleLayers} />
       </Canvas>
       <div style={{ position: 'absolute', bottom: 12, left: 12, display: 'flex', gap: 6, flexWrap: 'wrap', maxWidth: '90%' }}>
         <button onClick={() => setShowHead(v => !v)} style={{ ...btnStyle, opacity: showHead ? 1 : 0.4 }}>
@@ -419,6 +425,9 @@ export default function HairScene({ params: _params, colorRGB: _colorRGB, profil
         </button>
         <button onClick={() => setShowPolycam(v => !v)} style={{ ...btnStyle, opacity: showPolycam ? 1 : 0.4 }}>
           polycam
+        </button>
+        <button onClick={() => setShowSplat(v => !v)} style={{ ...btnStyle, opacity: showSplat ? 1 : 0.4 }}>
+          gaussians
         </button>
         <button onClick={() => setShowFace(v => !v)} style={{ ...btnStyle, opacity: showFace ? 1 : 0.4 }}>
           face

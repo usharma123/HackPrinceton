@@ -13,8 +13,8 @@ export function useARFaceMesh(): ARFaceMesh | null {
       try {
         const res = await fetch('/api/face-mesh');
         if (res.ok && !cancelled) {
-          const data: ARFaceMesh = await res.json();
-          setMesh(prev =>
+          const data: ARFaceMesh | null = await res.json();
+          if (data) setMesh(prev =>
             prev?.capturedAt === data.capturedAt ? prev : data
           );
         }

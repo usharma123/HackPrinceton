@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
 
 export async function GET() {
   if (!stored) {
-    return NextResponse.json({ error: 'No face mesh captured yet' }, { status: 404 });
+    return NextResponse.json(null, { status: 200 });
   }
   return NextResponse.json(stored);
 }
