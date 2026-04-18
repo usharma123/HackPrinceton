@@ -8,6 +8,7 @@ import ScanSetup from '@/components/ScanSetup';
 import dynamic from 'next/dynamic';
 import { mockUserHeadProfile } from '@/data/mockProfile';
 import { useFaceLift } from '@/hooks/useFaceLift';
+import { useHairStep } from '@/hooks/useHairStep';
 import { useState } from 'react';
 
 // Dynamically import HairScene (Three.js — no SSR)
@@ -18,9 +19,11 @@ export default function Home() {
   const [profile, setProfile] = useState<UserHeadProfile>(mockUserHeadProfile);
   const [params, setParams] = useState<HairParams>(mockUserHeadProfile.currentStyle.params);
 
-  // Kick off FaceLift as soon as the scan captures a frontal snapshot.
+  // Both jobs fire in parallel as soon as the scan captures a frontal snapshot.
   // imageDataUrl is undefined until a real webcam scan completes (mock profile has none).
-  const facelift = useFaceLift(profile.faceScanData?.imageDataUrl);
+  // HairStep receives the original photo; FaceLift baldifies it server-side before reconstructing.
+  const facelift  = useFaceLift(profile.faceScanData?.imageDataUrl);
+  const hairstep  = useHairStep(profile.faceScanData?.imageDataUrl);
 
   const handleSetupComplete = (newProfile: UserHeadProfile) => {
     setProfile(newProfile);
