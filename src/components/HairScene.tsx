@@ -343,7 +343,7 @@ function Scene({ profile, showFace = true, showHead = true, showPolycam = false,
 
       {showSplat && (
         <Suspense fallback={null}>
-          <Splat src="/models/gaussians.ply" />
+          <Splat src="/models/gaussians.splat" alphaTest={0.1} scale={0.77} position={[0, -0.79, 0]} />
         </Suspense>
       )}
 
@@ -414,6 +414,7 @@ export default function HairScene({ params: _params, colorRGB: _colorRGB, profil
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <Canvas
         shadows
+        gl={{ toneMapping: THREE.NoToneMapping, outputColorSpace: THREE.LinearSRGBColorSpace }}
         camera={{ position: [0, 0, 7.8], fov: 45 }}
         style={{ width: '100%', height: '100%', background: '#001f5b' }}
       >
